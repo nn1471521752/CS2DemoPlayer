@@ -1,0 +1,23 @@
+# Node / Electron 依赖
+node_modules/
+dist/
+build/
+.npm/
+
+# Python 环境与缓存
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# CS2 Demo 录像文件 (体积太大，千万别进版本库)
+*.dem
+
+# 环境变量与系统文件
+.env
+.DS_Store
+Thumbs.db
+
+# 编辑器配置 (可选)
+.vscode/
+.idea/

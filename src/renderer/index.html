@@ -1,0 +1,30 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>CS2 Director - Tactical Radar Replay</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div class="control-panel">
+    <h2>CS2 Director Demo Player</h2>
+    <div class="actions">
+      <button id="btn-open">Import Demo (.dem)</button>
+      <span id="status-text">Ready. Waiting for demo import...</span>
+    </div>
+  </div>
+
+  <div class="canvas-container">
+    <canvas id="radar-canvas" width="800" height="800"></canvas>
+  </div>
+
+  <div class="control-panel">
+    <div class="actions" style="width:100%; gap:12px;">
+      <input id="progress-bar" type="range" min="0" max="0" value="0" step="1" style="width:100%;" disabled>
+      <span id="progress-text">0/0</span>
+    </div>
+  </div>
+
+  <script src="js/ui.js"></script>
+</body>
+</html>
