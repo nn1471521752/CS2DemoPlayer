@@ -12,6 +12,8 @@ __pycache__/
 
 # CS2 Demo 录像文件 (体积太大，千万别进版本库)
 *.dem
+*.sqlite
+*.db
 
 # 环境变量与系统文件
 .env
