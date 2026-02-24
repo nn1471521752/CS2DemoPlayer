@@ -270,21 +270,53 @@ def build_round_grenades_by_tick(parser, start_tick, end_tick):
 
 def build_round_frames(parser, start_tick, end_tick, include_grenades=True):
     # Extract tick-level player data (include Z for lower/upper floor logic).
-    df = parser.parse_ticks(
-        ["X", "Y", "Z", "team_num", "is_alive", "yaw"],
-        ticks=range(start_tick, end_tick + 1),
-    )
+    # Prefer richer player props for overlay (id + active weapon), fallback to core props.
+    tick_props = [
+        "X",
+        "Y",
+        "Z",
+        "team_num",
+        "is_alive",
+        "yaw",
+        "user_id",
+        "name",
+        "active_weapon_name",
+        "weapon_name",
+    ]
+    try:
+        df = parser.parse_ticks(
+            tick_props,
+            ticks=range(start_tick, end_tick + 1),
+        )
+    except Exception:
+        df = parser.parse_ticks(
+            ["X", "Y", "Z", "team_num", "is_alive", "yaw"],
+            ticks=range(start_tick, end_tick + 1),
+        )
 
     # Keep only alive T/CT players for rendering.
     alive_df = df[(df["is_alive"] == True) & (df["team_num"].isin([2, 3]))]
     players_by_tick = {}
 
     if not alive_df.empty:
+        player_columns = ["X", "Y", "Z", "team_num", "yaw"]
+        optional_columns = ["user_id", "name", "active_weapon_name", "weapon_name"]
+        for column in optional_columns:
+            if column in alive_df.columns:
+                player_columns.append(column)
+
         grouped = alive_df.groupby("tick", sort=True)
         for tick, tick_df in grouped:
-            players_by_tick[int(tick)] = tick_df[
-                ["X", "Y", "Z", "team_num", "yaw"]
-            ].to_dict(orient="records")
+            players = tick_df[player_columns].to_dict(orient="records")
+            for player in players:
+                if "active_weapon_name" not in player and "weapon_name" in player:
+                    player["active_weapon_name"] = player.get("weapon_name")
+                if "user_id" in player:
+                    try:
+                        player["user_id"] = int(player["user_id"])
+                    except Exception:
+                        pass
+            players_by_tick[int(tick)] = players
 
     grenades_by_tick = {}
     if include_grenades:

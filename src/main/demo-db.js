@@ -6,6 +6,7 @@ const initSqlJs = require('sql.js');
 const projectRoot = path.resolve(__dirname, '../..');
 const dataDirectoryPath = path.join(projectRoot, 'data');
 const databaseFilePath = path.join(dataDirectoryPath, 'cs2-demo-player.sqlite');
+const databaseBackupFilePath = path.join(dataDirectoryPath, 'cs2-demo-player.sqlite.bak');
 
 let sqlModulePromise = null;
 let databasePromise = null;
@@ -60,6 +61,10 @@ function getScalar(database, sql, params = [], fallback = 0) {
 function tableHasColumn(database, tableName, columnName) {
   const rows = getAll(database, `PRAGMA table_info(${tableName});`);
   return rows.some((row) => String(row.name) === columnName);
+}
+
+function toBoolean(value) {
+  return toNumber(value) === 1;
 }
 
 async function getSqlModule() {
@@ -132,6 +137,7 @@ function runMigrations(database) {
       start_tick INTEGER NOT NULL,
       end_tick INTEGER NOT NULL,
       tickrate REAL NOT NULL DEFAULT 64,
+      has_grenades INTEGER NOT NULL DEFAULT 0,
       frames_json TEXT NOT NULL,
       frames_count INTEGER NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL,
@@ -144,6 +150,10 @@ function runMigrations(database) {
     CREATE INDEX IF NOT EXISTS idx_round_frames_checksum
     ON round_frames (checksum);
   `);
+
+  if (!tableHasColumn(database, 'round_frames', 'has_grenades')) {
+    database.run(`ALTER TABLE round_frames ADD COLUMN has_grenades INTEGER NOT NULL DEFAULT 0;`);
+  }
 }
 
 async function getDatabase() {
@@ -151,15 +161,23 @@ async function getDatabase() {
     databasePromise = (async () => {
       const SQL = await getSqlModule();
       const fileExists = fs.existsSync(databaseFilePath);
-      const raw = fileExists ? fs.readFileSync(databaseFilePath) : null;
-      const database = raw ? new SQL.Database(raw) : new SQL.Database();
-      runMigrations(database);
-
       if (!fileExists) {
-        await persistDatabase(database);
+        return await createFreshDatabase(SQL);
       }
 
-      return database;
+      try {
+        const raw = fs.readFileSync(databaseFilePath);
+        const database = new SQL.Database(raw);
+        runMigrations(database);
+        return database;
+      } catch (error) {
+        if (!isDatabaseCorruptionError(error)) {
+          throw error;
+        }
+
+        await quarantineCorruptedDatabaseFile(error);
+        return await createFreshDatabase(SQL);
+      }
     })();
   }
 
@@ -169,7 +187,75 @@ async function getDatabase() {
 async function persistDatabase(database) {
   const data = database.export();
   await fs.promises.mkdir(dataDirectoryPath, { recursive: true });
-  await fs.promises.writeFile(databaseFilePath, Buffer.from(data));
+  const tempFilePath = `${databaseFilePath}.tmp`;
+  const tempBackupPath = `${databaseFilePath}.replace-bak`;
+  const payload = Buffer.from(data);
+
+  await fs.promises.writeFile(tempFilePath, payload);
+
+  try {
+    await fs.promises.rename(databaseFilePath, tempBackupPath);
+  } catch (error) {
+    if (!error || error.code !== 'ENOENT') {
+      throw error;
+    }
+  }
+
+  try {
+    await fs.promises.rename(tempFilePath, databaseFilePath);
+  } catch (error) {
+    try {
+      await fs.promises.rename(tempBackupPath, databaseFilePath);
+    } catch (_rollbackError) {
+      // noop
+    }
+    throw error;
+  }
+
+  try {
+    await fs.promises.copyFile(databaseFilePath, databaseBackupFilePath);
+  } catch (_backupError) {
+    // Best effort backup only.
+  }
+
+  try {
+    await fs.promises.unlink(tempBackupPath);
+  } catch (_cleanupError) {
+    // noop
+  }
+}
+
+function isDatabaseCorruptionError(error) {
+  const message = String(error?.message || '').toLowerCase();
+  return message.includes('malformed') || message.includes('file is not a database');
+}
+
+async function quarantineCorruptedDatabaseFile(error) {
+  const timestamp = new Date().toISOString().replaceAll(':', '-');
+  const corruptedFilePath = path.join(
+    dataDirectoryPath,
+    `cs2-demo-player.sqlite.corrupt-${timestamp}`,
+  );
+
+  try {
+    await fs.promises.rename(databaseFilePath, corruptedFilePath);
+  } catch (renameError) {
+    if (!renameError || renameError.code !== 'ENOENT') {
+      throw renameError;
+    }
+  }
+
+  console.error(`[DemoDB] Corrupted database quarantined: ${corruptedFilePath}`);
+  if (error?.message) {
+    console.error(`[DemoDB] Corruption reason: ${error.message}`);
+  }
+}
+
+async function createFreshDatabase(SQL) {
+  const database = new SQL.Database();
+  runMigrations(database);
+  await persistDatabase(database);
+  return database;
 }
 
 async function computeDemoChecksum(demoPath) {
@@ -233,13 +319,45 @@ function mapRoundFrameRow(row) {
     startTick: toNumber(row.start_tick),
     endTick: toNumber(row.end_tick),
     tickrate: toNumber(row.tickrate, 64),
+    hasGrenades: toBoolean(row.has_grenades),
     framesCount: toNumber(row.frames_count),
     frames: parseJsonArray(String(row.frames_json || '')),
     updatedAt: String(row.updated_at),
   };
 }
 
+function computeParseStatus({
+  isParsed,
+  roundsCount,
+  cachedRoundsCount,
+  cachedGrenadeRoundsCount,
+}) {
+  const parsed = Boolean(isParsed);
+  const totalRounds = toNumber(roundsCount);
+  const cachedRounds = toNumber(cachedRoundsCount);
+  const cachedGrenadeRounds = toNumber(cachedGrenadeRoundsCount);
+
+  if (!parsed || totalRounds <= 0) {
+    return { code: 'P0', label: 'UNPARSED' };
+  }
+
+  if (cachedRounds <= 0) {
+    return { code: 'P1', label: 'INDEX_ONLY' };
+  }
+
+  if (cachedRounds < totalRounds || cachedGrenadeRounds < totalRounds) {
+    return { code: 'P2', label: 'PARTIAL_CACHE' };
+  }
+
+  return { code: 'P3', label: 'FULL_CACHE' };
+}
+
 function mapDemoSummaryRow(row) {
+  const roundsCount = toNumber(row.rounds_count);
+  const cachedRoundsCount = toNumber(row.cached_rounds_count);
+  const cachedGrenadeRoundsCount = toNumber(row.cached_grenade_rounds_count);
+  const isParsed = toBoolean(row.is_parsed);
+
   return {
     checksum: String(row.checksum),
     demoPath: String(row.demo_path),
@@ -247,9 +365,16 @@ function mapDemoSummaryRow(row) {
     displayName: String(row.display_name || row.file_name),
     mapName: String(row.map_name),
     tickrate: toNumber(row.tickrate, 64),
-    roundsCount: toNumber(row.rounds_count),
-    cachedRoundsCount: toNumber(row.cached_rounds_count),
-    isParsed: toNumber(row.is_parsed) === 1,
+    roundsCount,
+    cachedRoundsCount,
+    cachedGrenadeRoundsCount,
+    isParsed,
+    parseStatus: computeParseStatus({
+      isParsed,
+      roundsCount,
+      cachedRoundsCount,
+      cachedGrenadeRoundsCount,
+    }),
     importedAt: String(row.imported_at),
     updatedAt: String(row.updated_at),
   };
@@ -304,6 +429,21 @@ async function getDemoByChecksum(checksum) {
   const cachedRoundsCount = toNumber(
     getScalar(database, 'SELECT COUNT(*) FROM round_frames WHERE checksum = ?', [checksum]),
   );
+  const cachedGrenadeRoundsCount = toNumber(
+    getScalar(
+      database,
+      'SELECT COUNT(*) FROM round_frames WHERE checksum = ? AND has_grenades = 1',
+      [checksum],
+    ),
+  );
+  const roundsCount = toNumber(demoRow.rounds_count);
+  const isParsed = toBoolean(demoRow.is_parsed);
+  const parseStatus = computeParseStatus({
+    isParsed,
+    roundsCount,
+    cachedRoundsCount,
+    cachedGrenadeRoundsCount,
+  });
 
   return {
     checksum: String(demoRow.checksum),
@@ -315,9 +455,11 @@ async function getDemoByChecksum(checksum) {
     mapName: String(demoRow.map_name),
     mapRaw: String(demoRow.map_raw),
     tickrate: toNumber(demoRow.tickrate, 64),
-    roundsCount: toNumber(demoRow.rounds_count),
+    roundsCount,
     cachedRoundsCount,
-    isParsed: toNumber(demoRow.is_parsed) === 1,
+    cachedGrenadeRoundsCount,
+    parseStatus,
+    isParsed,
     importedAt: String(demoRow.imported_at),
     updatedAt: String(demoRow.updated_at),
     rounds: roundRows.map(mapRoundRow),
@@ -479,10 +621,14 @@ async function listDemos() {
         d.is_parsed,
         d.imported_at,
         d.updated_at,
-        COALESCE(rf.cached_rounds_count, 0) AS cached_rounds_count
+        COALESCE(rf.cached_rounds_count, 0) AS cached_rounds_count,
+        COALESCE(rf.cached_grenade_rounds_count, 0) AS cached_grenade_rounds_count
       FROM demos d
       LEFT JOIN (
-        SELECT checksum, COUNT(*) AS cached_rounds_count
+        SELECT
+          checksum,
+          COUNT(*) AS cached_rounds_count,
+          SUM(CASE WHEN has_grenades = 1 THEN 1 ELSE 0 END) AS cached_grenade_rounds_count
         FROM round_frames
         GROUP BY checksum
       ) rf
@@ -530,9 +676,56 @@ async function renameDemo(checksum, displayName) {
   return await getDemoByChecksum(normalizedChecksum);
 }
 
+async function deleteDemo(checksum) {
+  const normalizedChecksum = String(checksum || '').trim();
+  if (!normalizedChecksum) {
+    throw new Error('Missing demo checksum.');
+  }
+
+  const database = await getDatabase();
+  const existing = getOne(database, 'SELECT checksum FROM demos WHERE checksum = ?', [normalizedChecksum]);
+  if (!existing) {
+    return false;
+  }
+
+  database.run('BEGIN TRANSACTION');
+  try {
+    database.run('DELETE FROM demos WHERE checksum = ?', [normalizedChecksum]);
+    database.run('COMMIT');
+  } catch (error) {
+    try {
+      database.run('ROLLBACK');
+    } catch (_rollbackError) {
+      // Ignore rollback failures, original error is more useful.
+    }
+    throw error;
+  }
+
+  await persistDatabase(database);
+  return true;
+}
+
 function normalizeRoundFrames(roundFrames) {
   if (!Array.isArray(roundFrames)) {
     return [];
+  }
+
+  function detectHasGrenades(frames) {
+    if (!Array.isArray(frames) || frames.length === 0) {
+      return false;
+    }
+
+    return frames.some((frame) => {
+      if (!frame || typeof frame !== 'object') {
+        return false;
+      }
+
+      if (Object.prototype.hasOwnProperty.call(frame, 'grenades')) {
+        return true;
+      }
+
+      return Array.isArray(frame.grenades) && frame.grenades.length > 0;
+    });
   }
 
   return roundFrames
@@ -542,6 +735,10 @@ function normalizeRoundFrames(roundFrames) {
       endTick: toNumber(roundFrame.endTick ?? roundFrame.end_tick),
       tickrate: toNumber(roundFrame.tickrate, 64),
       frames: Array.isArray(roundFrame.frames) ? roundFrame.frames : [],
+      hasGrenades:
+        typeof roundFrame.hasGrenades === 'boolean'
+          ? roundFrame.hasGrenades
+          : detectHasGrenades(roundFrame.frames),
     }))
     .filter((roundFrame) => roundFrame.roundNumber > 0);
 }
@@ -566,15 +763,17 @@ async function saveRoundFramesBatch(checksum, roundFrames, options = {}) {
           start_tick,
           end_tick,
           tickrate,
+          has_grenades,
           frames_json,
           frames_count,
           updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(checksum, round_number) DO UPDATE SET
           start_tick = excluded.start_tick,
           end_tick = excluded.end_tick,
           tickrate = excluded.tickrate,
+          has_grenades = excluded.has_grenades,
           frames_json = excluded.frames_json,
           frames_count = excluded.frames_count,
           updated_at = excluded.updated_at
@@ -590,6 +789,7 @@ async function saveRoundFramesBatch(checksum, roundFrames, options = {}) {
           roundFrame.startTick,
           roundFrame.endTick,
           roundFrame.tickrate,
+          roundFrame.hasGrenades ? 1 : 0,
           framePayload,
           roundFrame.frames.length,
           now,
@@ -628,6 +828,7 @@ async function getRoundFrames(checksum, roundNumber) {
         start_tick,
         end_tick,
         tickrate,
+        has_grenades,
         frames_json,
         frames_count,
         updated_at
@@ -662,7 +863,7 @@ async function getDebugInfo() {
   const latestDemoRow = getOne(
     database,
     `
-      SELECT checksum, file_name, display_name, updated_at, rounds_count
+      SELECT checksum, file_name, display_name, updated_at, rounds_count, is_parsed
       FROM demos
       ORDER BY updated_at DESC
       LIMIT 1
@@ -676,16 +877,36 @@ async function getDebugInfo() {
     roundFramesCount,
     parsedDemosCount,
     latestDemo: latestDemoRow
-      ? {
-          checksum: String(latestDemoRow.checksum),
-          fileName: String(latestDemoRow.file_name),
-          displayName: String(latestDemoRow.display_name || latestDemoRow.file_name),
-          updatedAt: String(latestDemoRow.updated_at),
-          roundsCount: toNumber(latestDemoRow.rounds_count),
-          cachedRoundsCount: toNumber(
+      ? (() => {
+          const cachedRoundsCount = toNumber(
             getScalar(database, 'SELECT COUNT(*) FROM round_frames WHERE checksum = ?', [latestDemoRow.checksum]),
-          ),
-        }
+          );
+          const cachedGrenadeRoundsCount = toNumber(
+            getScalar(
+              database,
+              'SELECT COUNT(*) FROM round_frames WHERE checksum = ? AND has_grenades = 1',
+              [latestDemoRow.checksum],
+            ),
+          );
+          const roundsCountForLatest = toNumber(latestDemoRow.rounds_count);
+          const isParsedForLatest = toBoolean(latestDemoRow.is_parsed);
+
+          return {
+            checksum: String(latestDemoRow.checksum),
+            fileName: String(latestDemoRow.file_name),
+            displayName: String(latestDemoRow.display_name || latestDemoRow.file_name),
+            updatedAt: String(latestDemoRow.updated_at),
+            roundsCount: roundsCountForLatest,
+            cachedRoundsCount,
+            cachedGrenadeRoundsCount,
+            parseStatus: computeParseStatus({
+              isParsed: isParsedForLatest,
+              roundsCount: roundsCountForLatest,
+              cachedRoundsCount,
+              cachedGrenadeRoundsCount,
+            }),
+          };
+        })()
       : null,
   };
 }
@@ -695,6 +916,7 @@ module.exports = {
   getDemoByChecksum,
   listDemos,
   renameDemo,
+  deleteDemo,
   saveDemoIndex,
   saveRoundFrames,
   saveRoundFramesBatch,

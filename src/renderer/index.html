@@ -23,15 +23,15 @@
       <div id="demo-list" class="demo-list">
         <div class="demo-empty">No demos in database</div>
       </div>
-      <div class="demo-rename">
-        <input id="demo-rename-input" type="text" placeholder="Rename selected demo" disabled>
-        <button id="btn-demo-rename" type="button" disabled>Rename</button>
-      </div>
-    </aside>
-    <aside class="db-panel">
-      <h3>Database Debug</h3>
-      <div id="db-info" class="db-info">
-        <div class="db-empty">No demo selected</div>
+      <div id="parse-job-progress" class="parse-job-progress is-hidden">
+        <div class="parse-job-header">
+          <span id="parse-job-text">Idle</span>
+          <span id="parse-job-percent">0%</span>
+        </div>
+        <div class="parse-job-bar">
+          <div id="parse-job-bar-fill" class="parse-job-bar-fill"></div>
+        </div>
+        <div id="parse-job-meta" class="parse-job-meta">Waiting...</div>
       </div>
       <button id="btn-parse-db" disabled>Parse &amp; Save To DB</button>
     </aside>
@@ -48,9 +48,15 @@
 
   <div class="control-panel">
     <div class="actions" style="width:100%; gap:12px;">
+      <button id="btn-play-toggle" type="button" disabled>Play</button>
       <input id="progress-bar" type="range" min="0" max="0" value="0" step="1" style="width:100%;" disabled>
       <span id="progress-text">0/0</span>
     </div>
+  </div>
+
+  <div id="demo-context-menu" class="demo-context-menu is-hidden" role="menu" aria-label="Demo actions">
+    <button id="demo-context-rename" class="demo-context-item" type="button" role="menuitem">Rename</button>
+    <button id="demo-context-delete" class="demo-context-item danger" type="button" role="menuitem">Delete</button>
   </div>
 
   <script src="js/ui.js"></script>

@@ -59,6 +59,28 @@ body {
   cursor: not-allowed;
 }
 
+#btn-play-toggle {
+  flex: 0 0 auto;
+  background-color: #374151;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 9px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#btn-play-toggle:hover {
+  background-color: #4b5563;
+}
+
+#btn-play-toggle:disabled {
+  background-color: #555;
+  color: #888;
+  cursor: not-allowed;
+}
+
 #status-text {
   font-size: 14px;
   color: #aaa;
@@ -157,6 +179,13 @@ body {
   font-size: 13px;
 }
 
+.demo-item-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .demo-item-meta {
   display: block;
   margin-top: 2px;
@@ -164,102 +193,127 @@ body {
   font-size: 12px;
 }
 
-.demo-rename {
-  display: flex;
-  gap: 8px;
+.parse-status-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
 }
 
-#demo-rename-input {
-  flex: 1 1 auto;
-  min-width: 0;
-  border: 1px solid #444;
-  border-radius: 4px;
-  background: #121212;
-  color: #f1f1f1;
-  padding: 8px;
-  font-size: 12px;
+.parse-status-p0 {
+  background: #3f3f46;
+  color: #e4e4e7;
 }
 
-#demo-rename-input:disabled {
-  color: #888;
+.parse-status-p1 {
+  background: #7c2d12;
+  color: #ffedd5;
 }
 
-#btn-demo-rename {
-  flex: 0 0 auto;
+.parse-status-p2 {
+  background: #854d0e;
+  color: #fef9c3;
+}
+
+.parse-status-p3 {
+  background: #14532d;
+  color: #dcfce7;
+}
+
+.demo-context-menu {
+  position: fixed;
+  z-index: 1200;
+  min-width: 148px;
+  background: #171717;
+  border: 1px solid #3b3b3b;
+  border-radius: 8px;
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.42);
+  padding: 6px;
+}
+
+.demo-context-menu.is-hidden {
+  display: none;
+}
+
+.demo-context-item {
+  width: 100%;
   border: none;
-  border-radius: 4px;
-  background: #2d6a4f;
-  color: #fff;
+  border-radius: 6px;
+  background: transparent;
+  color: #e5e7eb;
+  text-align: left;
   padding: 8px 10px;
   font-size: 12px;
   cursor: pointer;
 }
 
-#btn-demo-rename:hover {
-  background: #40916c;
+.demo-context-item:hover {
+  background: #1f2937;
 }
 
-#btn-demo-rename:disabled {
-  background: #555;
-  color: #888;
-  cursor: not-allowed;
+.demo-context-item.danger {
+  color: #fca5a5;
 }
 
-.db-panel {
-  width: 280px;
-  background: #1e1e1e;
-  border-radius: 8px;
-  padding: 14px;
-  box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+.demo-context-item.danger:hover {
+  background: #3f1d1d;
+  color: #fecaca;
 }
 
-.db-panel h3 {
-  font-size: 15px;
-  color: #f39c12;
-}
-
-.db-info {
-  flex: 1 1 auto;
-  min-height: 0;
+.parse-job-progress {
   border: 1px solid #2e2e2e;
   border-radius: 6px;
-  background: #151515;
-  padding: 10px;
+  background: #141414;
+  padding: 8px;
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  overflow: auto;
+  gap: 6px;
 }
 
-.db-empty {
-  color: #888;
-  font-size: 12px;
+.parse-job-progress.is-hidden {
+  display: none;
 }
 
-.db-row {
+.parse-job-header {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 8px;
   font-size: 12px;
+  color: #d1d5db;
 }
 
-.db-key {
+.parse-job-bar {
+  width: 100%;
+  height: 8px;
+  border-radius: 99px;
+  overflow: hidden;
+  background: #27272a;
+}
+
+.parse-job-bar-fill {
+  width: 0%;
+  height: 100%;
+  background: linear-gradient(90deg, #2563eb 0%, #38bdf8 100%);
+  transition: width 0.2s ease;
+}
+
+.parse-job-progress.stage-done .parse-job-bar-fill {
+  background: linear-gradient(90deg, #15803d 0%, #22c55e 100%);
+}
+
+.parse-job-progress.stage-error .parse-job-bar-fill {
+  background: linear-gradient(90deg, #991b1b 0%, #ef4444 100%);
+}
+
+.parse-job-meta {
+  font-size: 12px;
   color: #9ca3af;
-  flex: 0 0 auto;
-}
-
-.db-value {
-  color: #e5e7eb;
-  text-align: right;
-  word-break: break-all;
-}
-
-.db-divider {
-  margin: 4px 0 1px 0;
-  border-top: 1px solid #2a2a2a;
 }
 
 #btn-parse-db {
@@ -386,10 +440,6 @@ body {
   }
 
   .library-panel {
-    width: 100%;
-  }
-
-  .db-panel {
     width: 100%;
   }
 

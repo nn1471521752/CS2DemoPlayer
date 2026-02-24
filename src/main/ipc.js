@@ -7,6 +7,7 @@ const {
   getDemoByChecksum,
   listDemos,
   renameDemo,
+  deleteDemo,
   saveDemoIndex,
   saveRoundFrames,
   saveRoundFramesBatch,
@@ -38,19 +39,20 @@ let selectedDemoPath = null;
 let selectedDemoChecksum = null;
 let selectedDemoFileStats = null;
 
-function resolveCacheStatus(cachedRoundsCount, roundsCount) {
+function resolveCacheStatus(cachedRoundsCount, roundsCount, cachedGrenadeRoundsCount = cachedRoundsCount) {
   const safeCachedRoundsCount = toInteger(cachedRoundsCount);
+  const safeCachedGrenadeRoundsCount = toInteger(cachedGrenadeRoundsCount);
   const safeRoundsCount = toInteger(roundsCount);
 
   if (safeRoundsCount <= 0) {
     return 'empty';
   }
 
-  if (safeCachedRoundsCount >= safeRoundsCount) {
+  if (safeCachedRoundsCount >= safeRoundsCount && safeCachedGrenadeRoundsCount >= safeRoundsCount) {
     return 'complete';
   }
 
-  if (safeCachedRoundsCount > 0) {
+  if (safeCachedRoundsCount > 0 || safeCachedGrenadeRoundsCount > 0) {
     return 'partial';
   }
 
@@ -174,6 +176,18 @@ function hasGrenadesInFrameCache(frames) {
   return frames.some((frame) => frame && Object.prototype.hasOwnProperty.call(frame, 'grenades'));
 }
 
+function emitParseProgress(sender, payload) {
+  if (!sender || typeof sender.send !== 'function') {
+    return;
+  }
+
+  if (typeof sender.isDestroyed === 'function' && sender.isDestroyed()) {
+    return;
+  }
+
+  sender.send('parse-progress', payload);
+}
+
 ipcMain.handle('analyze-demo', async () => {
   // Ask user to select a demo file.
   const { canceled, filePaths } = await dialog.showOpenDialog({
@@ -196,7 +210,8 @@ ipcMain.handle('analyze-demo', async () => {
 
     const existingDemo = await getDemoByChecksum(selectedDemoChecksum);
     if (existingDemo && existingDemo.isParsed && Array.isArray(existingDemo.rounds) && existingDemo.rounds.length > 0) {
-      const cachedRoundsCount = await getCachedRoundsCount(selectedDemoChecksum);
+      const cachedRoundsCount = toInteger(existingDemo.cachedRoundsCount);
+      const cachedGrenadeRoundsCount = toInteger(existingDemo.cachedGrenadeRoundsCount);
       const fileExists = fs.existsSync(existingDemo.demoPath);
       return {
         status: 'success',
@@ -205,27 +220,72 @@ ipcMain.handle('analyze-demo', async () => {
         canParse: fileExists,
         checksum: selectedDemoChecksum,
         display_name: existingDemo.displayName,
+        parse_status: existingDemo.parseStatus,
         map: existingDemo.mapName,
         map_raw: existingDemo.mapRaw,
         tickrate: existingDemo.tickrate,
         rounds: existingDemo.rounds,
         cachedRoundsCount,
-        cacheStatus: resolveCacheStatus(cachedRoundsCount, existingDemo.roundsCount),
+        cachedGrenadeRoundsCount,
+        cacheStatus: resolveCacheStatus(cachedRoundsCount, existingDemo.roundsCount, cachedGrenadeRoundsCount),
         fileExists,
         dbInfo: await getDebugInfo(),
       };
     }
 
     const parserResult = await runParser(selectedDemoPath, 'index');
+    if (parserResult.status !== 'success') {
+      return {
+        ...parserResult,
+        source: 'preview-error',
+        previouslyImported: Boolean(existingDemo),
+        canParse: true,
+        checksum: selectedDemoChecksum,
+        display_name: existingDemo?.displayName || path.basename(selectedDemoPath),
+        parse_status: existingDemo?.parseStatus || { code: 'P0', label: 'UNPARSED' },
+        cachedRoundsCount: existingDemo?.cachedRoundsCount || 0,
+        cachedGrenadeRoundsCount: existingDemo?.cachedGrenadeRoundsCount || 0,
+        cacheStatus: resolveCacheStatus(
+          existingDemo?.cachedRoundsCount || 0,
+          existingDemo?.roundsCount || 0,
+          existingDemo?.cachedGrenadeRoundsCount || 0,
+        ),
+        fileExists: true,
+        dbInfo: await getDebugInfo(),
+      };
+    }
+
+    const indexedDemo = await saveDemoIndex({
+      checksum: selectedDemoChecksum,
+      demoPath: selectedDemoPath,
+      fileStats: selectedDemoFileStats,
+      mapName: parserResult.map,
+      mapRaw: parserResult.map_raw,
+      tickrate: parserResult.tickrate,
+      rounds: parserResult.rounds || [],
+    });
+    const cachedRoundsCount = toInteger(indexedDemo?.cachedRoundsCount);
+    const cachedGrenadeRoundsCount = toInteger(indexedDemo?.cachedGrenadeRoundsCount);
+
     return {
       ...parserResult,
-      source: parserResult.status === 'success' ? 'preview' : 'preview-error',
+      source: 'preview',
       previouslyImported: Boolean(existingDemo),
       canParse: true,
       checksum: selectedDemoChecksum,
-      display_name: existingDemo?.displayName || path.basename(selectedDemoPath),
-      cachedRoundsCount: existingDemo?.cachedRoundsCount || 0,
-      cacheStatus: resolveCacheStatus(existingDemo?.cachedRoundsCount || 0, existingDemo?.roundsCount || 0),
+      display_name: indexedDemo?.displayName || existingDemo?.displayName || path.basename(selectedDemoPath),
+      parse_status: indexedDemo?.parseStatus || existingDemo?.parseStatus || { code: 'P0', label: 'UNPARSED' },
+      map: indexedDemo?.mapName || parserResult.map,
+      map_raw: indexedDemo?.mapRaw || parserResult.map_raw,
+      tickrate: indexedDemo?.tickrate || parserResult.tickrate,
+      rounds: indexedDemo?.rounds || parserResult.rounds || [],
+      cachedRoundsCount,
+      cachedGrenadeRoundsCount,
+      cacheStatus: resolveCacheStatus(
+        cachedRoundsCount,
+        indexedDemo?.roundsCount || 0,
+        cachedGrenadeRoundsCount,
+      ),
       fileExists: true,
       dbInfo: await getDebugInfo(),
     };
@@ -240,7 +300,7 @@ ipcMain.handle('analyze-demo', async () => {
   }
 });
 
-ipcMain.handle('parse-current-demo', async () => {
+ipcMain.handle('parse-current-demo', async (event, payload = {}) => {
   if (!selectedDemoPath || !selectedDemoChecksum) {
     return {
       status: 'error',
@@ -274,11 +334,36 @@ ipcMain.handle('parse-current-demo', async () => {
     const persistedRounds = Array.isArray(persistedDemo.rounds) ? persistedDemo.rounds : [];
     const parsedRoundFrames = [];
     const failedRounds = [];
+    const totalRounds = persistedRounds.length;
+    const cacheMode = String(payload.cacheMode || 'full').toLowerCase();
+    const includeGrenades = cacheMode !== 'fast';
 
-    for (const round of persistedRounds) {
+    emitParseProgress(event.sender, {
+      stage: 'start',
+      cacheMode: includeGrenades ? 'full' : 'fast',
+      includeGrenades,
+      current: 0,
+      total: totalRounds,
+      percent: totalRounds > 0 ? 0 : 100,
+      message: totalRounds > 0 ? 'Preparing round parsing...' : 'No rounds detected',
+    });
+
+    for (let index = 0; index < persistedRounds.length; index += 1) {
+      const round = persistedRounds[index];
       const roundNumber = toInteger(round.number);
       const startTick = toInteger(round.start_tick);
       const endTick = toInteger(round.end_tick, startTick);
+
+      emitParseProgress(event.sender, {
+        stage: 'progress',
+        cacheMode: includeGrenades ? 'full' : 'fast',
+        includeGrenades,
+        current: index,
+        total: totalRounds,
+        percent: totalRounds > 0 ? Math.floor((index / totalRounds) * 100) : 100,
+        roundNumber,
+        message: `Parsing round ${roundNumber}...`,
+      });
 
       if (roundNumber <= 0 || endTick < startTick) {
         failedRounds.push({
@@ -288,9 +373,11 @@ ipcMain.handle('parse-current-demo', async () => {
         continue;
       }
 
-      // Parse/save stage focuses on fast preload. Grenade trajectories can be lazily enriched on first round open.
-      // Pass trailing "0" so Python skips parse_grenades() at this stage.
-      const roundResult = await runParser(selectedDemoPath, 'round', [startTick, endTick, 0]);
+      const roundResult = await runParser(
+        selectedDemoPath,
+        'round',
+        [startTick, endTick, includeGrenades ? 1 : 0],
+      );
       if (roundResult.status !== 'success') {
         failedRounds.push({
           roundNumber,
@@ -304,13 +391,40 @@ ipcMain.handle('parse-current-demo', async () => {
         startTick,
         endTick,
         tickrate: Number(roundResult.tickrate) || Number(persistedDemo.tickrate) || 64,
+        hasGrenades: Boolean(roundResult.includes_grenades),
         frames: Array.isArray(roundResult.frames) ? roundResult.frames : [],
+      });
+
+      emitParseProgress(event.sender, {
+        stage: 'progress',
+        cacheMode: includeGrenades ? 'full' : 'fast',
+        includeGrenades,
+        current: index + 1,
+        total: totalRounds,
+        percent: totalRounds > 0 ? Math.floor(((index + 1) / totalRounds) * 100) : 100,
+        roundNumber,
+        message: `Round ${roundNumber} parsed`,
       });
     }
 
     await saveRoundFramesBatch(selectedDemoChecksum, parsedRoundFrames, { replaceChecksum: true });
-    const cachedRoundsCount = await getCachedRoundsCount(selectedDemoChecksum);
-    const hasCompleteCache = persistedRounds.length > 0 && cachedRoundsCount >= persistedRounds.length;
+    const refreshedDemo = await getDemoByChecksum(selectedDemoChecksum);
+    const cachedRoundsCount = toInteger(refreshedDemo?.cachedRoundsCount);
+    const cachedGrenadeRoundsCount = toInteger(refreshedDemo?.cachedGrenadeRoundsCount);
+    const hasCompleteCache = persistedRounds.length > 0
+      && cachedRoundsCount >= persistedRounds.length
+      && cachedGrenadeRoundsCount >= persistedRounds.length;
+
+    emitParseProgress(event.sender, {
+      stage: 'done',
+      cacheMode: includeGrenades ? 'full' : 'fast',
+      includeGrenades,
+      current: totalRounds,
+      total: totalRounds,
+      percent: 100,
+      failedRoundsCount: failedRounds.length,
+      message: 'Parsing complete',
+    });
 
     return {
       status: 'success',
@@ -318,18 +432,26 @@ ipcMain.handle('parse-current-demo', async () => {
       previouslyImported: true,
       canParse: true,
       checksum: selectedDemoChecksum,
-      display_name: persistedDemo.displayName,
-      map: persistedDemo.mapName,
-      map_raw: persistedDemo.mapRaw,
-      tickrate: persistedDemo.tickrate,
-      rounds: persistedDemo.rounds,
+      display_name: refreshedDemo?.displayName || persistedDemo.displayName,
+      parse_status: refreshedDemo?.parseStatus || { code: 'P0', label: 'UNPARSED' },
+      map: refreshedDemo?.mapName || persistedDemo.mapName,
+      map_raw: refreshedDemo?.mapRaw || persistedDemo.mapRaw,
+      tickrate: refreshedDemo?.tickrate || persistedDemo.tickrate,
+      rounds: refreshedDemo?.rounds || persistedDemo.rounds,
       cachedRoundsCount,
+      cachedGrenadeRoundsCount,
       failedRounds,
-      cacheStatus: hasCompleteCache ? 'complete' : resolveCacheStatus(cachedRoundsCount, persistedRounds.length),
+      cacheStatus: hasCompleteCache
+        ? 'complete'
+        : resolveCacheStatus(cachedRoundsCount, persistedRounds.length, cachedGrenadeRoundsCount),
       fileExists: true,
       dbInfo: await getDebugInfo(),
     };
   } catch (error) {
+    emitParseProgress(event.sender, {
+      stage: 'error',
+      message: `Parsing failed: ${error.message}`,
+    });
     return {
       status: 'error',
       message: `Failed to persist demo: ${error.message}`,
@@ -415,6 +537,45 @@ ipcMain.handle('demo-library-rename', async (_event, payload = {}) => {
   }
 });
 
+ipcMain.handle('demo-library-delete', async (_event, payload = {}) => {
+  const checksum = String(payload.checksum || '').trim();
+  if (!checksum) {
+    return {
+      status: 'error',
+      message: 'Missing demo checksum.',
+    };
+  }
+
+  try {
+    const deleted = await deleteDemo(checksum);
+    if (!deleted) {
+      return {
+        status: 'error',
+        message: 'Demo not found in database.',
+      };
+    }
+
+    if (selectedDemoChecksum === checksum) {
+      selectedDemoChecksum = null;
+      selectedDemoPath = null;
+      selectedDemoFileStats = null;
+    }
+
+    return {
+      status: 'success',
+      deletedChecksum: checksum,
+      selectedChecksum: selectedDemoChecksum,
+      demos: await listDemos(),
+      dbInfo: await getDebugInfo(),
+    };
+  } catch (error) {
+    return {
+      status: 'error',
+      message: `Failed to delete demo: ${error.message}`,
+    };
+  }
+});
+
 ipcMain.handle('load-demo-from-db', async (_event, payload = {}) => {
   const checksum = String(payload.checksum || '').trim();
   if (!checksum) {
@@ -446,7 +607,8 @@ ipcMain.handle('load-demo-from-db', async (_event, payload = {}) => {
       }
     }
 
-    const cachedRoundsCount = await getCachedRoundsCount(selectedDemoChecksum);
+    const cachedRoundsCount = toInteger(demo.cachedRoundsCount);
+    const cachedGrenadeRoundsCount = toInteger(demo.cachedGrenadeRoundsCount);
     return {
       status: 'success',
       source: 'database',
@@ -454,12 +616,14 @@ ipcMain.handle('load-demo-from-db', async (_event, payload = {}) => {
       canParse: fileExists,
       checksum: demo.checksum,
       display_name: demo.displayName,
+      parse_status: demo.parseStatus,
       map: demo.mapName,
       map_raw: demo.mapRaw,
       tickrate: demo.tickrate,
       rounds: demo.rounds,
       cachedRoundsCount,
-      cacheStatus: resolveCacheStatus(cachedRoundsCount, demo.roundsCount),
+      cachedGrenadeRoundsCount,
+      cacheStatus: resolveCacheStatus(cachedRoundsCount, demo.roundsCount, cachedGrenadeRoundsCount),
       fileExists,
       dbInfo: await getDebugInfo(),
     };
@@ -495,40 +659,22 @@ ipcMain.handle('analyze-demo-round', async (_event, payload = {}) => {
       const cachedRound = await getRoundFrames(selectedDemoChecksum, roundNumber);
       if (cachedRound && Array.isArray(cachedRound.frames)) {
         const cachedRoundsCount = await getCachedRoundsCount(selectedDemoChecksum);
-        const hasGrenades = hasGrenadesInFrameCache(cachedRound.frames);
-
-        if (hasGrenades) {
-          return {
-            status: 'success',
-            source: 'database-cache',
-            mode: 'round',
-            map: null,
-            map_raw: null,
-            tickrate: cachedRound.tickrate,
-            round_number: roundNumber,
-            start_tick: cachedRound.startTick,
-            end_tick: cachedRound.endTick,
-            frames: cachedRound.frames,
-            cachedRoundsCount,
-          };
-        }
-
-        // Legacy cache without grenade trajectory data: return cached frames if demo file is unavailable.
-        if (!selectedDemoPath || !fs.existsSync(selectedDemoPath)) {
-          return {
-            status: 'success',
-            source: 'database-cache-legacy',
-            mode: 'round',
-            map: null,
-            map_raw: null,
-            tickrate: cachedRound.tickrate,
-            round_number: roundNumber,
-            start_tick: cachedRound.startTick,
-            end_tick: cachedRound.endTick,
-            frames: cachedRound.frames,
-            cachedRoundsCount,
-          };
-        }
+        const hasGrenades = Boolean(cachedRound.hasGrenades) || hasGrenadesInFrameCache(cachedRound.frames);
+        return {
+          status: 'success',
+          source: hasGrenades ? 'database-cache' : 'database-cache-legacy',
+          mode: 'round',
+          map: null,
+          map_raw: null,
+          tickrate: cachedRound.tickrate,
+          round_number: roundNumber,
+          start_tick: cachedRound.startTick,
+          end_tick: cachedRound.endTick,
+          frames: cachedRound.frames,
+          cachedRoundsCount,
+          hasGrenades,
+          cacheNeedsUpgrade: !hasGrenades,
+        };
       }
     } catch (cacheReadError) {
       console.warn(`[Round Cache] Read failed for round ${roundNumber}: ${cacheReadError.message}`);
@@ -561,6 +707,7 @@ ipcMain.handle('analyze-demo-round', async (_event, payload = {}) => {
         startTick: Math.floor(startTick),
         endTick: Math.floor(endTick),
         tickrate: Number(liveResult.tickrate) || 64,
+        hasGrenades: Boolean(liveResult.includes_grenades),
         frames: Array.isArray(liveResult.frames) ? liveResult.frames : [],
       });
     } catch (cacheWriteError) {

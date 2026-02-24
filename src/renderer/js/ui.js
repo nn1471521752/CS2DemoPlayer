@@ -8,13 +8,20 @@ const canvas = document.getElementById('radar-canvas');
 const ctx = canvas.getContext('2d');
 const progressBar = document.getElementById('progress-bar');
 const progressText = document.getElementById('progress-text');
+const btnPlayToggle = document.getElementById('btn-play-toggle');
 const roundList = document.getElementById('round-list');
 const dbInfoElement = document.getElementById('db-info');
 const btnParseDb = document.getElementById('btn-parse-db');
 const demoList = document.getElementById('demo-list');
 const btnRefreshDemos = document.getElementById('btn-refresh-demos');
-const demoRenameInput = document.getElementById('demo-rename-input');
-const btnDemoRename = document.getElementById('btn-demo-rename');
+const demoContextMenu = document.getElementById('demo-context-menu');
+const demoContextRenameItem = document.getElementById('demo-context-rename');
+const demoContextDeleteItem = document.getElementById('demo-context-delete');
+const parseJobProgressElement = document.getElementById('parse-job-progress');
+const parseJobTextElement = document.getElementById('parse-job-text');
+const parseJobPercentElement = document.getElementById('parse-job-percent');
+const parseJobBarFillElement = document.getElementById('parse-job-bar-fill');
+const parseJobMetaElement = document.getElementById('parse-job-meta');
 
 const defaultOpenButtonText = btnOpen.innerText;
 const defaultParseButtonText = btnParseDb ? btnParseDb.innerText : 'Parse & Save To DB';
@@ -27,6 +34,13 @@ const DEFAULT_RADAR_SIZE = 1024;
 const FALLBACK_MAP_META = { pos_x: -3230, pos_y: 1713, scale: 5.0, threshold_z: 0 };
 const DEFAULT_MAP_META = CS2_MAP_META[DEFAULT_MAP_NAME] || FALLBACK_MAP_META;
 const GRENADE_TRAIL_MAX_FRAMES = 96;
+const DEFAULT_PARSE_STATUS = Object.freeze({ code: 'P0', label: 'UNPARSED' });
+const PARSE_STATUS_LABELS = Object.freeze({
+  P0: 'UNPARSED',
+  P1: 'INDEX_ONLY',
+  P2: 'PARTIAL_CACHE',
+  P3: 'FULL_CACHE',
+});
 
 const GRENADE_COLOR_BY_TYPE = {
   smoke: '#7f8c8d',
@@ -37,6 +51,77 @@ const GRENADE_COLOR_BY_TYPE = {
   decoy: '#95a5a6',
   unknown: '#ecf0f1',
 };
+
+const GRENADE_EFFECT_CONFIG_BY_TYPE = Object.freeze({
+  smoke: Object.freeze({
+    radiusWorldUnits: 144,
+    durationSeconds: 18,
+    fillAlpha: 0.36,
+    strokeAlpha: 0.92,
+    fadeOutSeconds: 1.5,
+    trailPersistSecondsAfterExplode: 3,
+    detectExplodeByStabilization: true,
+    deriveExplodeByTailDuration: true,
+    stabilizationMinTravelUnits: 12,
+    preBurstMinDeltaWorldUnits: 2.5,
+  }),
+  molotov: Object.freeze({
+    radiusWorldUnits: 150,
+    durationSeconds: 7,
+    fillAlpha: 0.16,
+    strokeAlpha: 0.8,
+    fadeOutSeconds: 1.2,
+    trailPersistSecondsAfterExplode: 3,
+    detectExplodeByStabilization: true,
+    stabilizationMinTravelUnits: 12,
+    preBurstMinDeltaWorldUnits: 2.5,
+  }),
+  incendiary: Object.freeze({
+    radiusWorldUnits: 150,
+    durationSeconds: 7,
+    fillAlpha: 0.16,
+    strokeAlpha: 0.8,
+    fadeOutSeconds: 1.2,
+    trailPersistSecondsAfterExplode: 3,
+    detectExplodeByStabilization: true,
+    stabilizationMinTravelUnits: 12,
+    preBurstMinDeltaWorldUnits: 2.5,
+  }),
+  he: Object.freeze({
+    radiusWorldUnits: 350,
+    durationSeconds: 1,
+    fillAlpha: 0.2,
+    strokeAlpha: 0.85,
+    fadeOutSeconds: 0.35,
+    pulse: true,
+    trailPersistSecondsAfterExplode: 0,
+    detectExplodeByStabilization: false,
+  }),
+  flash: Object.freeze({
+    radiusWorldUnits: 280,
+    durationSeconds: 1,
+    fillAlpha: 0.16,
+    strokeAlpha: 0.7,
+    fadeOutSeconds: 0.35,
+    pulse: true,
+    trailPersistSecondsAfterExplode: 0,
+    detectExplodeByStabilization: false,
+  }),
+  decoy: Object.freeze({
+    radiusWorldUnits: 120,
+    durationSeconds: 5,
+    fillAlpha: 0.14,
+    strokeAlpha: 0.6,
+    fadeOutSeconds: 1,
+    trailPersistSecondsAfterExplode: 0,
+    detectExplodeByStabilization: false,
+  }),
+});
+
+const MAX_GRENADE_EFFECT_SECONDS = Object.values(GRENADE_EFFECT_CONFIG_BY_TYPE)
+  .reduce((maxValue, config) => Math.max(maxValue, Number(config.durationSeconds) || 0), 0);
+const MAX_GRENADE_TRAIL_PERSIST_SECONDS = Object.values(GRENADE_EFFECT_CONFIG_BY_TYPE)
+  .reduce((maxValue, config) => Math.max(maxValue, Number(config.trailPersistSecondsAfterExplode) || 0), 0);
 
 const radarImg = new Image();
 let radarImageReady = false;
@@ -127,8 +212,8 @@ let roundsData = [];
 let currentFrameIndex = 0;
 let isPlaying = false;
 let isUserScrubbing = false;
-let playbackTimerId = null;
-let animationRequestId = null;
+let playbackAnimationId = null;
+let playbackLastTimestamp = 0;
 let activeRoundIndex = -1;
 let isRoundLoading = false;
 let currentTickrate = DEFAULT_TICKRATE;
@@ -138,12 +223,23 @@ let currentDemoChecksum = '';
 let currentDemoDisplayName = '';
 let currentDemoPreviouslyImported = false;
 let currentDemoCachedRoundsCount = 0;
+let currentDemoCachedGrenadeRoundsCount = 0;
 let currentDemoFileExists = false;
+let currentDemoParseStatus = DEFAULT_PARSE_STATUS;
 let isDbParsing = false;
 let currentDbInfo = null;
 let demoLibraryData = [];
 let isDemoLibraryLoading = false;
 let isDemoRenaming = false;
+let isDemoDeleting = false;
+let currentContextMenuChecksum = '';
+let parseJobProgressState = {
+  stage: 'idle',
+  percent: 0,
+  current: 0,
+  total: 0,
+  message: 'Idle',
+};
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -198,14 +294,6 @@ function getFrameTick(frameIndex) {
   return currentRoundStartTick + safeIndex;
 }
 
-function getFrameDelayMs(frameIndex) {
-  const currentTick = getFrameTick(frameIndex);
-  const nextTick = getFrameTick(Math.min(frameIndex + 1, framesData.length - 1));
-  const tickDelta = Math.max(nextTick - currentTick, 1);
-  const delayMs = (tickDelta / currentTickrate) * 1000 / PLAYBACK_SPEED;
-  return clamp(Math.round(delayMs), 1, 1000);
-}
-
 function escapeHtml(text) {
   return String(text)
     .replaceAll('&', '&amp;')
@@ -240,6 +328,45 @@ function shortenChecksum(checksum) {
   return `${checksum.slice(0, 8)}...${checksum.slice(-6)}`;
 }
 
+function hexToRgba(hexColor, alpha = 1) {
+  const safeAlpha = clamp(Number(alpha) || 0, 0, 1);
+  const normalized = String(hexColor || '').trim().replace('#', '');
+  const full = normalized.length === 3
+    ? normalized.split('').map((char) => `${char}${char}`).join('')
+    : normalized;
+
+  if (!/^[0-9a-fA-F]{6}$/.test(full)) {
+    return `rgba(255, 255, 255, ${safeAlpha})`;
+  }
+
+  const red = Number.parseInt(full.slice(0, 2), 16);
+  const green = Number.parseInt(full.slice(2, 4), 16);
+  const blue = Number.parseInt(full.slice(4, 6), 16);
+  return `rgba(${red}, ${green}, ${blue}, ${safeAlpha})`;
+}
+
+function normalizeParseStatus(statusLike) {
+  const maybeCode = String(statusLike?.code || '').trim().toUpperCase();
+  const code = Object.prototype.hasOwnProperty.call(PARSE_STATUS_LABELS, maybeCode) ? maybeCode : DEFAULT_PARSE_STATUS.code;
+  const fallbackLabel = PARSE_STATUS_LABELS[code] || DEFAULT_PARSE_STATUS.label;
+  const maybeLabel = String(statusLike?.label || '').trim().toUpperCase();
+
+  return {
+    code,
+    label: maybeLabel || fallbackLabel,
+  };
+}
+
+function getParseStatusClassName(parseStatus) {
+  const normalized = normalizeParseStatus(parseStatus);
+  return `parse-status-${normalized.code.toLowerCase()}`;
+}
+
+function formatParseStatus(parseStatus) {
+  const normalized = normalizeParseStatus(parseStatus);
+  return `${normalized.code} ${normalized.label}`;
+}
+
 function normalizeGrenadeType(grenadeType) {
   const normalized = String(grenadeType || '').toLowerCase();
   if (normalized.includes('smoke')) {
@@ -268,6 +395,44 @@ function getGrenadeColor(grenadeType) {
   return GRENADE_COLOR_BY_TYPE[typeKey] || GRENADE_COLOR_BY_TYPE.unknown;
 }
 
+function formatWeaponLabel(weaponName) {
+  const raw = String(weaponName || '').trim();
+  if (!raw) {
+    return '';
+  }
+
+  // Normalize parser values like "weapon_ak47" to "ak47".
+  const normalized = raw.toLowerCase().startsWith('weapon_')
+    ? raw.slice(7)
+    : raw;
+
+  return normalized.length > 16 ? `${normalized.slice(0, 15)}...` : normalized;
+}
+
+function getPlayerIdLabel(player) {
+  if (!player || typeof player !== 'object') {
+    return '';
+  }
+
+  const candidates = [
+    player.user_id,
+    player.userId,
+    player.userid,
+  ];
+
+  for (const candidate of candidates) {
+    const number = Number(candidate);
+    if (Number.isFinite(number)) {
+      const rounded = Math.floor(number);
+      if (rounded >= 0) {
+        return String(rounded);
+      }
+    }
+  }
+
+  return '';
+}
+
 function syncParseButtonState() {
   if (!btnParseDb) {
     return;
@@ -278,7 +443,8 @@ function syncParseButtonState() {
   btnParseDb.disabled = !canParseCurrentDemo || isDbParsing;
 
   if (isDbParsing) {
-    btnParseDb.innerText = 'Parsing...';
+    const parsePercent = clamp(coerceNonNegativeInteger(parseJobProgressState.percent, 0), 0, 100);
+    btnParseDb.innerText = `Parsing ${parsePercent}%`;
     return;
   }
 
@@ -295,6 +461,84 @@ function syncParseButtonState() {
   btnParseDb.innerText = currentDemoPreviouslyImported ? 'Re-parse & Save To DB' : 'Parse & Save To DB';
 }
 
+function syncPlayToggleButtonState() {
+  if (!btnPlayToggle) {
+    return;
+  }
+
+  const hasFrames = Array.isArray(framesData) && framesData.length > 0;
+  btnPlayToggle.disabled = !hasFrames || isRoundLoading;
+  btnPlayToggle.innerText = isPlaying ? 'Pause' : 'Play';
+}
+
+function setParseJobProgressVisibility(visible) {
+  if (!parseJobProgressElement) {
+    return;
+  }
+
+  parseJobProgressElement.classList.toggle('is-hidden', !visible);
+}
+
+function renderParseJobProgress() {
+  if (!parseJobProgressElement || !parseJobTextElement || !parseJobPercentElement || !parseJobBarFillElement || !parseJobMetaElement) {
+    return;
+  }
+
+  const stage = String(parseJobProgressState.stage || 'idle').toLowerCase();
+  const percent = clamp(coerceNonNegativeInteger(parseJobProgressState.percent, 0), 0, 100);
+  const current = coerceNonNegativeInteger(parseJobProgressState.current, 0);
+  const total = coerceNonNegativeInteger(parseJobProgressState.total, 0);
+  const baseMessage = String(parseJobProgressState.message || '').trim();
+  const stageTitle = stage === 'done'
+    ? 'Parse Complete'
+    : (stage === 'error' ? 'Parse Failed' : (stage === 'start' ? 'Parse Started' : 'Parsing'));
+
+  const metaParts = [];
+  if (total > 0) {
+    metaParts.push(`${current}/${total} rounds`);
+  }
+  if (baseMessage) {
+    metaParts.unshift(baseMessage);
+  }
+
+  parseJobProgressElement.classList.remove('stage-done', 'stage-error');
+  if (stage === 'done') {
+    parseJobProgressElement.classList.add('stage-done');
+  } else if (stage === 'error') {
+    parseJobProgressElement.classList.add('stage-error');
+  }
+
+  parseJobTextElement.innerText = stageTitle;
+  parseJobPercentElement.innerText = `${percent}%`;
+  parseJobBarFillElement.style.width = `${percent}%`;
+  parseJobMetaElement.innerText = metaParts.join(' | ') || 'Waiting...';
+  setParseJobProgressVisibility(stage !== 'idle');
+}
+
+function resetParseJobProgress() {
+  parseJobProgressState = {
+    stage: 'idle',
+    percent: 0,
+    current: 0,
+    total: 0,
+    message: 'Idle',
+  };
+  renderParseJobProgress();
+}
+
+function updateParseJobProgress(payload = {}) {
+  const stage = String(payload.stage || 'progress').toLowerCase();
+  parseJobProgressState = {
+    stage,
+    percent: clamp(coerceNonNegativeInteger(payload.percent, parseJobProgressState.percent), 0, 100),
+    current: coerceNonNegativeInteger(payload.current, parseJobProgressState.current),
+    total: coerceNonNegativeInteger(payload.total, parseJobProgressState.total),
+    message: String(payload.message || parseJobProgressState.message || ''),
+  };
+  renderParseJobProgress();
+  syncParseButtonState();
+}
+
 function renderDbInfoPanel() {
   if (!dbInfoElement) {
     return;
@@ -303,6 +547,7 @@ function renderDbInfoPanel() {
   const roundsCount = Array.isArray(roundsData) ? roundsData.length : 0;
   const importedLabel = currentDemoChecksum ? (currentDemoPreviouslyImported ? 'Yes' : 'No') : '-';
   const fileExistsLabel = currentDemoChecksum ? (currentDemoFileExists ? 'Yes' : 'No') : '-';
+  const parseStatusLabel = currentDemoChecksum ? formatParseStatus(currentDemoParseStatus) : '-';
   const db = currentDbInfo || {};
   const latest = db.latestDemo || null;
 
@@ -310,9 +555,11 @@ function renderDbInfoPanel() {
     <div class="db-row"><span class="db-key">Current demo name</span><span class="db-value">${escapeHtml(currentDemoDisplayName || '-')}</span></div>
     <div class="db-row"><span class="db-key">Current checksum</span><span class="db-value">${escapeHtml(shortenChecksum(currentDemoChecksum))}</span></div>
     <div class="db-row"><span class="db-key">Imported before</span><span class="db-value">${escapeHtml(importedLabel)}</span></div>
+    <div class="db-row"><span class="db-key">Parse status</span><span class="db-value">${escapeHtml(parseStatusLabel)}</span></div>
     <div class="db-row"><span class="db-key">File exists</span><span class="db-value">${escapeHtml(fileExistsLabel)}</span></div>
     <div class="db-row"><span class="db-key">Current rounds</span><span class="db-value">${escapeHtml(String(roundsCount))}</span></div>
     <div class="db-row"><span class="db-key">Current cached rounds</span><span class="db-value">${escapeHtml(String(currentDemoCachedRoundsCount))}</span></div>
+    <div class="db-row"><span class="db-key">Current grenade cache</span><span class="db-value">${escapeHtml(String(currentDemoCachedGrenadeRoundsCount))}</span></div>
     <div class="db-divider"></div>
     <div class="db-row"><span class="db-key">DB file</span><span class="db-value">${escapeHtml(db.databaseFilePath ?? '-')}</span></div>
     <div class="db-row"><span class="db-key">DB demos</span><span class="db-value">${escapeHtml(String(db.demosCount ?? 0))}</span></div>
@@ -320,7 +567,9 @@ function renderDbInfoPanel() {
     <div class="db-row"><span class="db-key">DB cached rounds</span><span class="db-value">${escapeHtml(String(db.roundFramesCount ?? 0))}</span></div>
     <div class="db-row"><span class="db-key">Parsed demos</span><span class="db-value">${escapeHtml(String(db.parsedDemosCount ?? 0))}</span></div>
     <div class="db-row"><span class="db-key">Last parsed</span><span class="db-value">${escapeHtml(latest ? (latest.displayName || latest.fileName) : '-')}</span></div>
+    <div class="db-row"><span class="db-key">Last parse status</span><span class="db-value">${escapeHtml(latest ? formatParseStatus(latest.parseStatus) : '-')}</span></div>
     <div class="db-row"><span class="db-key">Last cached rounds</span><span class="db-value">${escapeHtml(String(latest ? (latest.cachedRoundsCount ?? '-') : '-'))}</span></div>
+    <div class="db-row"><span class="db-key">Last grenade cache</span><span class="db-value">${escapeHtml(String(latest ? (latest.cachedGrenadeRoundsCount ?? '-') : '-'))}</span></div>
     <div class="db-row"><span class="db-key">Last parsed at</span><span class="db-value">${escapeHtml(latest ? formatTimeLabel(latest.updatedAt) : '-')}</span></div>
   `;
 }
@@ -346,33 +595,71 @@ async function refreshDbInfo() {
 function formatDemoLibraryMeta(demo) {
   const roundsCount = Number(demo?.roundsCount) || 0;
   const cachedRoundsCount = Number(demo?.cachedRoundsCount) || 0;
+  const cachedGrenadeRoundsCount = Number(demo?.cachedGrenadeRoundsCount) || 0;
   const mapName = demo?.mapName || 'Unknown';
-  return `${mapName} | Rounds ${cachedRoundsCount}/${roundsCount}`;
+  return `${mapName} | Cache ${cachedRoundsCount}/${roundsCount} | Grenades ${cachedGrenadeRoundsCount}/${roundsCount}`;
 }
 
-function syncDemoRenameControls() {
-  if (!demoRenameInput || !btnDemoRename) {
+function hideDemoContextMenu() {
+  if (!demoContextMenu) {
     return;
   }
 
-  const selectedDemo = demoLibraryData.find((demo) => demo.checksum === currentDemoChecksum);
-  const hasSelection = Boolean(selectedDemo);
+  demoContextMenu.classList.add('is-hidden');
+  currentContextMenuChecksum = '';
+}
 
-  if (!hasSelection) {
-    demoRenameInput.disabled = true;
-    demoRenameInput.value = '';
-    btnDemoRename.disabled = true;
-    btnDemoRename.innerText = 'Rename';
+function showDemoContextMenu(checksum, clientX, clientY) {
+  if (!demoContextMenu || !checksum) {
     return;
   }
 
-  demoRenameInput.disabled = isDemoRenaming;
-  btnDemoRename.disabled = isDemoRenaming;
-  btnDemoRename.innerText = isDemoRenaming ? 'Saving...' : 'Rename';
-
-  if (document.activeElement !== demoRenameInput) {
-    demoRenameInput.value = selectedDemo.displayName || selectedDemo.fileName || '';
+  const targetDemo = demoLibraryData.find((demo) => demo.checksum === checksum);
+  if (!targetDemo) {
+    return;
   }
+
+  currentContextMenuChecksum = checksum;
+  demoContextMenu.classList.remove('is-hidden');
+
+  const menuWidth = demoContextMenu.offsetWidth || 160;
+  const menuHeight = demoContextMenu.offsetHeight || 80;
+  const clampedX = clamp(clientX, 6, Math.max(6, window.innerWidth - menuWidth - 6));
+  const clampedY = clamp(clientY, 6, Math.max(6, window.innerHeight - menuHeight - 6));
+
+  demoContextMenu.style.left = `${clampedX}px`;
+  demoContextMenu.style.top = `${clampedY}px`;
+}
+
+function isDemoBusy() {
+  return isDemoRenaming || isDemoDeleting || isDbParsing || isRoundLoading;
+}
+
+function resetCurrentDemoState() {
+  pausePlayback();
+  isUserScrubbing = false;
+  framesData = [];
+  roundsData = [];
+  currentFrameIndex = 0;
+  activeRoundIndex = -1;
+  currentRoundStartTick = 0;
+  currentRoundEndTick = 0;
+  currentTickrate = DEFAULT_TICKRATE;
+  currentDemoChecksum = '';
+  currentDemoDisplayName = '';
+  currentDemoPreviouslyImported = false;
+  currentDemoCachedRoundsCount = 0;
+  currentDemoCachedGrenadeRoundsCount = 0;
+  currentDemoFileExists = false;
+  currentDemoParseStatus = DEFAULT_PARSE_STATUS;
+
+  setupProgressBar(0);
+  renderRoundList();
+  drawRadarBackground();
+  syncParseButtonState();
+  syncPlayToggleButtonState();
+  renderDbInfoPanel();
+  hideDemoContextMenu();
 }
 
 function renderDemoLibrary() {
@@ -380,6 +667,7 @@ function renderDemoLibrary() {
     return;
   }
 
+  hideDemoContextMenu();
   demoList.innerHTML = '';
 
   if (isDemoLibraryLoading) {
@@ -402,18 +690,32 @@ function renderDemoLibrary() {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'demo-item';
+    const parseStatus = normalizeParseStatus(demo?.parseStatus || demo?.parse_status);
+    const parseStatusClassName = getParseStatusClassName(parseStatus);
+    const parseStatusTitle = `${parseStatus.code} ${parseStatus.label}`;
     if (demo.checksum === currentDemoChecksum) {
       button.classList.add('active');
     }
 
     button.innerHTML = `
-      <span class="demo-item-title">${escapeHtml(demo.displayName || demo.fileName || demo.checksum)}</span>
+      <span class="demo-item-title-row">
+        <span class="demo-item-title">${escapeHtml(demo.displayName || demo.fileName || demo.checksum)}</span>
+        <span class="parse-status-badge ${parseStatusClassName}" title="${escapeHtml(parseStatusTitle)}">${escapeHtml(parseStatus.code)}</span>
+      </span>
       <span class="demo-item-meta">${escapeHtml(formatDemoLibraryMeta(demo))}</span>
+      <span class="demo-item-meta">${escapeHtml(parseStatus.label)}</span>
       <span class="demo-item-meta">${escapeHtml(formatTimeLabel(demo.updatedAt))}</span>
     `;
 
     button.addEventListener('click', () => {
+      hideDemoContextMenu();
       loadDemoByChecksum(demo.checksum);
+    });
+
+    button.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      showDemoContextMenu(demo.checksum, event.clientX, event.clientY);
     });
 
     demoList.appendChild(button);
@@ -429,7 +731,9 @@ function applyDemoResponseToUi(response) {
   currentDemoDisplayName = response.display_name || currentDemoDisplayName || '';
   currentDemoPreviouslyImported = Boolean(response.previouslyImported);
   currentDemoCachedRoundsCount = coerceNonNegativeInteger(response.cachedRoundsCount, 0);
+  currentDemoCachedGrenadeRoundsCount = coerceNonNegativeInteger(response.cachedGrenadeRoundsCount, 0);
   currentDemoFileExists = Boolean(response.fileExists ?? response.canParse);
+  currentDemoParseStatus = normalizeParseStatus(response.parse_status || response.parseStatus);
   currentTickrate = coercePositiveNumber(response.tickrate, DEFAULT_TICKRATE);
   currentRoundStartTick = 0;
   currentRoundEndTick = 0;
@@ -442,9 +746,10 @@ function applyDemoResponseToUi(response) {
   drawRadarBackground();
   applyDbInfo(response.dbInfo);
   syncParseButtonState();
+  syncPlayToggleButtonState();
   renderDbInfoPanel();
   renderDemoLibrary();
-  syncDemoRenameControls();
+  hideDemoContextMenu();
 
   return mapSelection;
 }
@@ -465,8 +770,13 @@ async function refreshDemoLibrary() {
     }
 
     demoLibraryData = Array.isArray(response.demos) ? response.demos : [];
-    if (!currentDemoChecksum && response.selectedChecksum) {
-      currentDemoChecksum = response.selectedChecksum;
+    const hasCurrentSelection = demoLibraryData.some((demo) => demo.checksum === currentDemoChecksum);
+    if (!hasCurrentSelection) {
+      if (response.selectedChecksum && demoLibraryData.some((demo) => demo.checksum === response.selectedChecksum)) {
+        currentDemoChecksum = response.selectedChecksum;
+      } else if (currentDemoChecksum) {
+        resetCurrentDemoState();
+      }
     }
 
     applyDbInfo(response.dbInfo);
@@ -475,7 +785,6 @@ async function refreshDemoLibrary() {
   } finally {
     isDemoLibraryLoading = false;
     renderDemoLibrary();
-    syncDemoRenameControls();
     renderDbInfoPanel();
   }
 }
@@ -485,6 +794,8 @@ async function loadDemoByChecksum(checksum) {
     return;
   }
 
+  hideDemoContextMenu();
+  resetParseJobProgress();
   statusText.innerText = 'Loading demo from database...';
   statusText.style.color = '#f39c12';
 
@@ -520,20 +831,18 @@ async function loadDemoByChecksum(checksum) {
 }
 
 function clearPlaybackLoopHandles() {
-  if (playbackTimerId !== null) {
-    clearTimeout(playbackTimerId);
-    playbackTimerId = null;
+  if (playbackAnimationId !== null) {
+    cancelAnimationFrame(playbackAnimationId);
+    playbackAnimationId = null;
   }
 
-  if (animationRequestId !== null) {
-    cancelAnimationFrame(animationRequestId);
-    animationRequestId = null;
-  }
+  playbackLastTimestamp = 0;
 }
 
 function pausePlayback() {
   isPlaying = false;
   clearPlaybackLoopHandles();
+  syncPlayToggleButtonState();
 }
 
 function resumePlayback() {
@@ -546,6 +855,8 @@ function resumePlayback() {
   }
 
   isPlaying = true;
+  playbackLastTimestamp = 0;
+  syncPlayToggleButtonState();
   scheduleNextFrame();
 }
 
@@ -558,16 +869,14 @@ function scheduleNextFrame() {
     return;
   }
 
-  clearPlaybackLoopHandles();
+  if (playbackAnimationId !== null) {
+    cancelAnimationFrame(playbackAnimationId);
+  }
 
-  const frameDelayMs = getFrameDelayMs(currentFrameIndex);
-  playbackTimerId = setTimeout(() => {
-    playbackTimerId = null;
-    animationRequestId = requestAnimationFrame(() => {
-      animationRequestId = null;
-      playNextFrame();
-    });
-  }, frameDelayMs);
+  playbackAnimationId = requestAnimationFrame((timestamp) => {
+    playbackAnimationId = null;
+    playNextFrame(timestamp);
+  });
 }
 
 function setupProgressBar(totalFrames) {
@@ -580,6 +889,7 @@ function setupProgressBar(totalFrames) {
   progressBar.disabled = totalFrames === 0;
 
   progressText.innerText = totalFrames > 0 ? `00:00/${formatMatchClock(getRoundDurationSeconds())}` : '00:00/00:00';
+  syncPlayToggleButtonState();
 }
 
 function updateProgressBar(frameIndex) {
@@ -623,6 +933,7 @@ async function loadRoundByIndex(roundIndex) {
     return;
   }
 
+  hideDemoContextMenu();
   const round = roundsData[roundIndex];
   if (!round) {
     return;
@@ -633,6 +944,7 @@ async function loadRoundByIndex(roundIndex) {
   pausePlayback();
   isUserScrubbing = false;
   setActiveRound(roundIndex);
+  syncPlayToggleButtonState();
 
   statusText.innerText = `Loading Round ${round.number}...`;
   statusText.style.color = '#f39c12';
@@ -685,6 +997,7 @@ async function loadRoundByIndex(roundIndex) {
   } finally {
     isRoundLoading = false;
     setRoundButtonsDisabled(false);
+    syncPlayToggleButtonState();
   }
 }
 
@@ -767,14 +1080,232 @@ function drawRadarBackground() {
   drawFallbackBackground();
 }
 
+function worldRadiusToCanvasRadius(worldRadius, scaleX, scaleY) {
+  const mapScale = Number(currentMapMeta?.scale) || Number(FALLBACK_MAP_META.scale) || 1;
+  const radarRadius = worldRadius / mapScale;
+  return radarRadius * ((scaleX + scaleY) / 2);
+}
+
+function drawGrenadeEffectCircle(grenadeType, worldPoint, elapsedSeconds, scaleX, scaleY, unitScale) {
+  const typeKey = normalizeGrenadeType(grenadeType);
+  const effectConfig = GRENADE_EFFECT_CONFIG_BY_TYPE[typeKey];
+  if (!effectConfig || !worldPoint) {
+    return;
+  }
+
+  const durationSeconds = Number(effectConfig.durationSeconds) || 0;
+  if (durationSeconds <= 0 || elapsedSeconds < 0 || elapsedSeconds > durationSeconds) {
+    return;
+  }
+
+  const progress = clamp(elapsedSeconds / durationSeconds, 0, 1);
+  const fadeOutSeconds = clamp(Number(effectConfig.fadeOutSeconds) || durationSeconds, 0.05, durationSeconds);
+  const fadeStartSeconds = Math.max(0, durationSeconds - fadeOutSeconds);
+  let fadeFactor = 1;
+  if (elapsedSeconds > fadeStartSeconds) {
+    const tailProgress = (elapsedSeconds - fadeStartSeconds) / fadeOutSeconds;
+    fadeFactor = 1 - clamp(tailProgress, 0, 1);
+  }
+  const baseColor = getGrenadeColor(typeKey);
+  const center = worldToCanvas(worldPoint.x, worldPoint.y, scaleX, scaleY);
+  let radius = worldRadiusToCanvasRadius(effectConfig.radiusWorldUnits, scaleX, scaleY);
+
+  if (effectConfig.pulse) {
+    radius *= (0.65 + 0.35 * progress);
+  }
+
+  const fillAlpha = clamp((Number(effectConfig.fillAlpha) || 0.14) * fadeFactor, 0.02, 1);
+  const strokeAlpha = clamp((Number(effectConfig.strokeAlpha) || 0.7) * fadeFactor, 0.06, 1);
+
+  ctx.beginPath();
+  ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
+  ctx.fillStyle = hexToRgba(baseColor, fillAlpha);
+  ctx.fill();
+  ctx.lineWidth = Math.max(1, 1.5 * unitScale);
+  ctx.strokeStyle = hexToRgba(baseColor, strokeAlpha);
+  ctx.stroke();
+}
+
+function distance3D(pointA, pointB) {
+  if (!pointA || !pointB) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const dx = Number(pointA.x) - Number(pointB.x);
+  const dy = Number(pointA.y) - Number(pointB.y);
+  const dz = Number(pointA.z) - Number(pointB.z);
+  return Math.sqrt((dx * dx) + (dy * dy) + (dz * dz));
+}
+
+function detectExplosionFrameIndexByStabilization(trail) {
+  if (!trail || !Array.isArray(trail.points) || trail.points.length < 4) {
+    return null;
+  }
+
+  const typeKey = normalizeGrenadeType(trail.grenadeType);
+  const effectConfig = GRENADE_EFFECT_CONFIG_BY_TYPE[typeKey] || null;
+  const requiredStableSteps = Math.max(6, Math.floor(currentTickrate * 0.18));
+  const stableDeltaWorldUnits = 0.1;
+  const preBurstMinDeltaWorldUnits = Number(effectConfig?.preBurstMinDeltaWorldUnits) || 2.0;
+
+  let trailingStableSteps = 0;
+  for (let index = trail.points.length - 1; index >= 1; index -= 1) {
+    const currentPoint = trail.points[index];
+    const previousPoint = trail.points[index - 1];
+    const delta = distance3D(currentPoint, previousPoint);
+    if (delta <= stableDeltaWorldUnits) {
+      trailingStableSteps += 1;
+    } else {
+      break;
+    }
+  }
+
+  if (trailingStableSteps < requiredStableSteps) {
+    return null;
+  }
+
+  const stableStartPointIndex = Math.max(0, trail.points.length - trailingStableSteps - 1);
+  const stableStartPoint = trail.points[stableStartPointIndex];
+  if (!stableStartPoint || !Number.isFinite(Number(stableStartPoint.frameIndex))) {
+    return null;
+  }
+
+  // Guard against false positives while grenade is still in hand / at throw origin:
+  // require at least one clearly moving segment before the trailing stable segment.
+  let hasPreBurstMovement = false;
+  for (let index = 1; index <= stableStartPointIndex; index += 1) {
+    const currentPoint = trail.points[index];
+    const previousPoint = trail.points[index - 1];
+    const delta = distance3D(currentPoint, previousPoint);
+    if (delta >= preBurstMinDeltaWorldUnits) {
+      hasPreBurstMovement = true;
+      break;
+    }
+  }
+  if (!hasPreBurstMovement) {
+    return null;
+  }
+
+  const stabilizationMinTravelUnits = Number(effectConfig?.stabilizationMinTravelUnits) || 0;
+  if (stabilizationMinTravelUnits > 0 && trail.firstRawPoint) {
+    const traveledDistance = distance3D(stableStartPoint, trail.firstRawPoint);
+    if (traveledDistance < stabilizationMinTravelUnits) {
+      return null;
+    }
+  }
+
+  return Number(stableStartPoint.frameIndex);
+}
+
+function findPointAtOrAfterFrame(points, targetFrameIndex) {
+  if (!Array.isArray(points) || points.length === 0) {
+    return null;
+  }
+
+  for (const point of points) {
+    if (point.frameIndex >= targetFrameIndex) {
+      return point;
+    }
+  }
+
+  return points[points.length - 1] || null;
+}
+
+function resolveGrenadeEffectState(trail, safeFrameIndex) {
+  const typeKey = normalizeGrenadeType(trail.grenadeType);
+  const effectConfig = GRENADE_EFFECT_CONFIG_BY_TYPE[typeKey] || null;
+  const lastSeenFrameIndex = trail.lastSeenFrameIndex;
+  const effectDurationFrames = Math.max(
+    0,
+    Math.round((Number(effectConfig?.durationSeconds) || 0) * currentTickrate),
+  );
+
+  let effectStartFrameIndex = null;
+  if (effectConfig) {
+    let stabilizationStartFrameIndex = null;
+    if (effectConfig.detectExplodeByStabilization) {
+      stabilizationStartFrameIndex = detectExplosionFrameIndexByStabilization(trail);
+    }
+
+    // Smoke projectile positions usually continue during active smoke.
+    // Back-calculate explode tick from "last seen - smoke duration" for better timing.
+    let tailDerivedStartFrameIndex = null;
+    if (
+      effectConfig.deriveExplodeByTailDuration
+      && effectDurationFrames > 0
+      && safeFrameIndex > lastSeenFrameIndex
+      && lastSeenFrameIndex - effectDurationFrames >= trail.firstSeenFrameIndex
+    ) {
+      tailDerivedStartFrameIndex = lastSeenFrameIndex - effectDurationFrames;
+    }
+
+    if (tailDerivedStartFrameIndex !== null && stabilizationStartFrameIndex !== null) {
+      effectStartFrameIndex = Math.max(tailDerivedStartFrameIndex, stabilizationStartFrameIndex);
+    } else if (tailDerivedStartFrameIndex !== null) {
+      effectStartFrameIndex = tailDerivedStartFrameIndex;
+    } else if (stabilizationStartFrameIndex !== null) {
+      effectStartFrameIndex = stabilizationStartFrameIndex;
+    } else if (safeFrameIndex > lastSeenFrameIndex) {
+      effectStartFrameIndex = lastSeenFrameIndex;
+    }
+
+    if (effectStartFrameIndex !== null) {
+      effectStartFrameIndex = clamp(effectStartFrameIndex, trail.firstSeenFrameIndex, lastSeenFrameIndex);
+      if (!Number.isFinite(effectStartFrameIndex)) {
+        effectStartFrameIndex = null;
+      }
+    }
+  }
+
+  const exploded = effectStartFrameIndex !== null && safeFrameIndex >= effectStartFrameIndex;
+  const trailPersistFrames = Math.max(
+    0,
+    Math.round((Number(effectConfig?.trailPersistSecondsAfterExplode) || 0) * currentTickrate),
+  );
+  const trailVisibleUntilFrame = exploded ? (effectStartFrameIndex + trailPersistFrames) : safeFrameIndex;
+  const shouldDrawTrail = trailVisibleUntilFrame >= trail.firstSeenFrameIndex && safeFrameIndex <= trailVisibleUntilFrame;
+
+  const effectElapsedSeconds = exploded
+    ? (safeFrameIndex - effectStartFrameIndex) / Math.max(currentTickrate, 1)
+    : -1;
+  const shouldDrawEffectCircle = Boolean(effectConfig)
+    && exploded
+    && effectElapsedSeconds >= 0
+    && (
+      effectDurationFrames <= 0
+        ? false
+        : effectElapsedSeconds <= (effectDurationFrames / Math.max(currentTickrate, 1))
+    );
+
+  const effectPoint = effectStartFrameIndex !== null
+    ? findPointAtOrAfterFrame(trail.points, effectStartFrameIndex)
+    : null;
+
+  return {
+    typeKey,
+    effectConfig,
+    exploded,
+    effectStartFrameIndex,
+    trailVisibleUntilFrame,
+    shouldDrawTrail,
+    shouldDrawEffectCircle,
+    effectElapsedSeconds,
+    effectPoint: effectPoint || trail.lastSeenPoint,
+  };
+}
+
 function drawGrenadeTrails(frameIndex, scaleX, scaleY, unitScale) {
   if (!framesData.length) {
     return;
   }
 
   const safeFrameIndex = clamp(frameIndex, 0, framesData.length - 1);
-  const firstTrailFrame = Math.max(0, safeFrameIndex - GRENADE_TRAIL_MAX_FRAMES);
+  const effectLookbackFrames = Math.ceil((MAX_GRENADE_EFFECT_SECONDS + MAX_GRENADE_TRAIL_PERSIST_SECONDS) * currentTickrate) + 8;
+  const lookbackFrameCount = Math.max(GRENADE_TRAIL_MAX_FRAMES, effectLookbackFrames);
+  const firstTrailFrame = Math.max(0, safeFrameIndex - lookbackFrameCount);
   const trailsByEntity = new Map();
+  const stabilizationRequiredFrames = Math.max(6, Math.floor(currentTickrate * 0.18));
+  const stabilizationMaxDelta = 0.1;
 
   for (let index = firstTrailFrame; index <= safeFrameIndex; index += 1) {
     const frameGrenades = framesData[index]?.grenades;
@@ -797,8 +1328,17 @@ function drawGrenadeTrails(frameIndex, scaleX, scaleY, unitScale) {
 
       if (!trailsByEntity.has(entityId)) {
         trailsByEntity.set(entityId, {
+          entityId,
           grenadeType: String(grenade?.grenade_type || 'unknown'),
           points: [],
+          firstSeenFrameIndex: index,
+          lastSeenFrameIndex: index,
+          stabilizationStartFrameIndex: null,
+          stableRunFrames: 0,
+          hasMovedSignificantly: false,
+          firstRawPoint: { x: worldX, y: worldY, z: worldZ, frameIndex: index },
+          previousRawPoint: null,
+          lastSeenPoint: { x: worldX, y: worldY, z: worldZ, frameIndex: index },
         });
       }
 
@@ -807,22 +1347,69 @@ function drawGrenadeTrails(frameIndex, scaleX, scaleY, unitScale) {
         continue;
       }
 
-      const lastPoint = trail.points[trail.points.length - 1];
-      if (
-        lastPoint
-        && Math.abs(lastPoint.x - worldX) < 0.01
-        && Math.abs(lastPoint.y - worldY) < 0.01
-      ) {
-        continue;
+      trail.lastSeenFrameIndex = index;
+      trail.lastSeenPoint = { x: worldX, y: worldY, z: worldZ, frameIndex: index };
+      const grenadeTypeKey = normalizeGrenadeType(trail.grenadeType);
+      const effectConfigForType = GRENADE_EFFECT_CONFIG_BY_TYPE[grenadeTypeKey] || null;
+      const stabilizationMinTravelUnits = Number(effectConfigForType?.stabilizationMinTravelUnits) || 0;
+      if (!trail.hasMovedSignificantly && trail.firstRawPoint) {
+        const traveledDistance = distance3D(
+          { x: worldX, y: worldY, z: worldZ },
+          trail.firstRawPoint,
+        );
+        if (traveledDistance >= stabilizationMinTravelUnits) {
+          trail.hasMovedSignificantly = true;
+        }
       }
 
+      if (trail.previousRawPoint) {
+        const rawDelta = distance3D(
+          { x: worldX, y: worldY, z: worldZ },
+          trail.previousRawPoint,
+        );
+        if (trail.hasMovedSignificantly && rawDelta <= stabilizationMaxDelta) {
+          trail.stableRunFrames += 1;
+        } else {
+          trail.stableRunFrames = 0;
+        }
+
+        if (
+          trail.stabilizationStartFrameIndex === null
+          && trail.stableRunFrames >= stabilizationRequiredFrames
+        ) {
+          trail.stabilizationStartFrameIndex = index - trail.stableRunFrames;
+        }
+      }
+      trail.previousRawPoint = { x: worldX, y: worldY, z: worldZ, frameIndex: index };
+
       trail.grenadeType = String(grenade?.grenade_type || trail.grenadeType);
-      trail.points.push({ x: worldX, y: worldY });
+      trail.points.push({ x: worldX, y: worldY, z: worldZ, frameIndex: index });
     }
   }
 
   for (const trail of trailsByEntity.values()) {
-    if (!Array.isArray(trail.points) || trail.points.length === 0) {
+    if (!Array.isArray(trail.points) || trail.points.length === 0 || trail.lastSeenFrameIndex < firstTrailFrame) {
+      continue;
+    }
+
+    const effectState = resolveGrenadeEffectState(trail, safeFrameIndex);
+    if (effectState.shouldDrawEffectCircle && effectState.effectPoint) {
+      drawGrenadeEffectCircle(
+        trail.grenadeType,
+        effectState.effectPoint,
+        effectState.effectElapsedSeconds,
+        scaleX,
+        scaleY,
+        unitScale,
+      );
+    }
+
+    if (!effectState.shouldDrawTrail) {
+      continue;
+    }
+
+    const visiblePoints = trail.points.filter((point) => point.frameIndex <= effectState.trailVisibleUntilFrame);
+    if (visiblePoints.length === 0) {
       continue;
     }
 
@@ -831,18 +1418,18 @@ function drawGrenadeTrails(frameIndex, scaleX, scaleY, unitScale) {
     ctx.fillStyle = color;
     ctx.lineWidth = Math.max(1, 1.6 * unitScale);
 
-    if (trail.points.length > 1) {
+    if (visiblePoints.length > 1) {
       ctx.beginPath();
-      const firstPointCanvas = worldToCanvas(trail.points[0].x, trail.points[0].y, scaleX, scaleY);
+      const firstPointCanvas = worldToCanvas(visiblePoints[0].x, visiblePoints[0].y, scaleX, scaleY);
       ctx.moveTo(firstPointCanvas.x, firstPointCanvas.y);
-      for (let pointIndex = 1; pointIndex < trail.points.length; pointIndex += 1) {
-        const canvasPoint = worldToCanvas(trail.points[pointIndex].x, trail.points[pointIndex].y, scaleX, scaleY);
+      for (let pointIndex = 1; pointIndex < visiblePoints.length; pointIndex += 1) {
+        const canvasPoint = worldToCanvas(visiblePoints[pointIndex].x, visiblePoints[pointIndex].y, scaleX, scaleY);
         ctx.lineTo(canvasPoint.x, canvasPoint.y);
       }
       ctx.stroke();
     }
 
-    const lastPoint = trail.points[trail.points.length - 1];
+    const lastPoint = visiblePoints[visiblePoints.length - 1];
     const lastCanvasPoint = worldToCanvas(lastPoint.x, lastPoint.y, scaleX, scaleY);
     const pointRadius = Math.max(2, 2.6 * unitScale);
     ctx.beginPath();
@@ -894,6 +1481,51 @@ function renderFrame(players, frameIndex = 0) {
     ctx.strokeStyle = '#fff';
     ctx.lineWidth = Math.max(1.5, 2 * unitScale);
     ctx.stroke();
+
+    const playerIdLabel = getPlayerIdLabel(player);
+    if (playerIdLabel) {
+      ctx.save();
+      const badgeRadius = Math.max(5, 4.6 * unitScale);
+      const badgeX = mapped.x + playerRadius - (badgeRadius * 0.25);
+      const badgeY = mapped.y - playerRadius + (badgeRadius * 0.25);
+
+      ctx.beginPath();
+      ctx.arc(badgeX, badgeY, badgeRadius, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(17, 17, 17, 0.92)';
+      ctx.fill();
+      ctx.lineWidth = Math.max(1, 1.1 * unitScale);
+      ctx.strokeStyle = '#fff';
+      ctx.stroke();
+
+      ctx.fillStyle = '#fff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = `bold ${Math.max(7, 6.6 * unitScale)}px Segoe UI`;
+      ctx.fillText(playerIdLabel, badgeX, badgeY + (0.25 * unitScale));
+      ctx.restore();
+    }
+
+    const weaponLabel = formatWeaponLabel(player.active_weapon_name || player.weapon_name);
+    if (weaponLabel) {
+      ctx.save();
+      const labelY = mapped.y - playerRadius - Math.max(8, 8 * unitScale);
+      ctx.font = `${Math.max(8, 7.2 * unitScale)}px Segoe UI`;
+      const textWidth = ctx.measureText(weaponLabel).width;
+      const paddingX = Math.max(3, 3 * unitScale);
+      const paddingY = Math.max(2, 2 * unitScale);
+      const boxWidth = textWidth + (paddingX * 2);
+      const boxHeight = Math.max(10, 9 * unitScale) + (paddingY * 2);
+      const boxX = mapped.x - (boxWidth / 2);
+      const boxY = labelY - boxHeight + Math.max(2, 1.5 * unitScale);
+
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.62)';
+      ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
+      ctx.fillStyle = '#fff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(weaponLabel, mapped.x, boxY + (boxHeight / 2));
+      ctx.restore();
+    }
   });
 }
 
@@ -910,12 +1542,52 @@ function renderFrameByIndex(index) {
   return safeIndex;
 }
 
-function playNextFrame() {
+function findFrameIndexForTargetTick(startIndex, targetTick) {
+  let index = clamp(startIndex, 0, Math.max(framesData.length - 1, 0));
+  while (index + 1 < framesData.length && getFrameTick(index + 1) <= targetTick) {
+    index += 1;
+  }
+  return index;
+}
+
+function playNextFrame(timestampMs) {
   if (!isPlaying || isUserScrubbing) {
     return;
   }
 
-  if (currentFrameIndex >= framesData.length) {
+  if (!framesData.length) {
+    pausePlayback();
+    return;
+  }
+
+  if (!Number.isFinite(timestampMs)) {
+    scheduleNextFrame();
+    return;
+  }
+
+  if (playbackLastTimestamp <= 0) {
+    playbackLastTimestamp = timestampMs;
+    scheduleNextFrame();
+    return;
+  }
+
+  const elapsedMs = Math.max(timestampMs - playbackLastTimestamp, 0);
+  const ticksToAdvance = Math.floor((elapsedMs / 1000) * currentTickrate * PLAYBACK_SPEED);
+  if (ticksToAdvance > 0) {
+    const currentTick = getFrameTick(currentFrameIndex);
+    const targetTick = currentTick + ticksToAdvance;
+    const nextIndex = findFrameIndexForTargetTick(currentFrameIndex, targetTick);
+    if (nextIndex !== currentFrameIndex) {
+      currentFrameIndex = nextIndex;
+      renderFrameByIndex(currentFrameIndex);
+    }
+
+    const msPerTick = 1000 / Math.max(currentTickrate * PLAYBACK_SPEED, 1);
+    playbackLastTimestamp = timestampMs - (elapsedMs % msPerTick);
+  }
+
+  if (currentFrameIndex >= framesData.length - 1) {
+    renderFrameByIndex(framesData.length - 1);
     pausePlayback();
     if (activeRoundIndex >= 0 && roundsData[activeRoundIndex]) {
       statusText.innerText = `Round ${roundsData[activeRoundIndex].number} playback finished`;
@@ -925,8 +1597,6 @@ function playNextFrame() {
     return;
   }
 
-  renderFrameByIndex(currentFrameIndex);
-  currentFrameIndex += 1;
   scheduleNextFrame();
 }
 
@@ -969,6 +1639,20 @@ progressBar.addEventListener('input', handleScrubInput);
 progressBar.addEventListener('mouseup', handleScrubEnd);
 progressBar.addEventListener('change', handleScrubEnd);
 
+if (btnPlayToggle) {
+  btnPlayToggle.addEventListener('click', () => {
+    if (isPlaying) {
+      pausePlayback();
+    } else {
+      resumePlayback();
+    }
+  });
+}
+
+ipcRenderer.on('parse-progress', (_event, payload = {}) => {
+  updateParseJobProgress(payload);
+});
+
 if (btnParseDb) {
   btnParseDb.addEventListener('click', async () => {
     if (isDbParsing || !currentDemoChecksum) {
@@ -976,6 +1660,13 @@ if (btnParseDb) {
     }
 
     isDbParsing = true;
+    updateParseJobProgress({
+      stage: 'start',
+      percent: 0,
+      current: 0,
+      total: roundsData.length,
+      message: 'Starting parser...',
+    });
     syncParseButtonState();
     statusText.innerText = 'Parsing all rounds and caching frames into database...';
     statusText.style.color = '#f39c12';
@@ -983,10 +1674,24 @@ if (btnParseDb) {
     try {
       const response = await ipcRenderer.invoke('parse-current-demo');
       if (response.status !== 'success') {
+        updateParseJobProgress({
+          stage: 'error',
+          message: response.message || 'Unknown parse error',
+        });
         statusText.innerText = `DB parse failed: ${response.message || 'Unknown error'}`;
         statusText.style.color = '#e74c3c';
         console.error('[Parse To DB Error]', response);
         return;
+      }
+
+      if (parseJobProgressState.stage !== 'done') {
+        updateParseJobProgress({
+          stage: 'done',
+          percent: 100,
+          current: roundsData.length,
+          total: roundsData.length,
+          message: 'Parsing complete',
+        });
       }
 
       const mapSelection = applyDemoResponseToUi(response);
@@ -1005,6 +1710,10 @@ if (btnParseDb) {
         statusText.style.color = isPartialCache ? '#f39c12' : '#2ecc71';
       }
     } catch (error) {
+      updateParseJobProgress({
+        stage: 'error',
+        message: error.message,
+      });
       statusText.innerText = `DB parse fatal error: ${error.message}`;
       statusText.style.color = '#e74c3c';
       console.error('[Parse To DB Fatal Error]', error);
@@ -1019,63 +1728,160 @@ if (btnParseDb) {
 
 if (btnRefreshDemos) {
   btnRefreshDemos.addEventListener('click', async () => {
+    hideDemoContextMenu();
     await refreshDemoLibrary();
   });
 }
 
-if (btnDemoRename && demoRenameInput) {
-  btnDemoRename.addEventListener('click', async () => {
-    if (isDemoRenaming || !currentDemoChecksum) {
-      return;
-    }
+async function renameDemoFromContextMenu(checksum) {
+  const demo = demoLibraryData.find((item) => item.checksum === checksum);
+  if (!demo) {
+    statusText.innerText = 'Rename failed: demo not found.';
+    statusText.style.color = '#e74c3c';
+    return;
+  }
 
-    const displayName = demoRenameInput.value.trim();
-    if (!displayName) {
-      statusText.innerText = 'Rename failed: display name cannot be empty.';
+  const defaultName = demo.displayName || demo.fileName || '';
+  const input = window.prompt('Rename demo', defaultName);
+  if (input === null) {
+    return;
+  }
+
+  const displayName = input.trim();
+  if (!displayName) {
+    statusText.innerText = 'Rename failed: display name cannot be empty.';
+    statusText.style.color = '#e74c3c';
+    return;
+  }
+
+  isDemoRenaming = true;
+
+  try {
+    const response = await ipcRenderer.invoke('demo-library-rename', {
+      checksum,
+      displayName,
+    });
+
+    if (response.status !== 'success') {
+      statusText.innerText = `Rename failed: ${response.message || 'Unknown error'}`;
       statusText.style.color = '#e74c3c';
       return;
     }
 
-    isDemoRenaming = true;
-    syncDemoRenameControls();
+    if (response.renamedDemo && response.renamedDemo.checksum === currentDemoChecksum) {
+      currentDemoDisplayName = response.renamedDemo.displayName;
+    }
 
-    try {
-      const response = await ipcRenderer.invoke('demo-library-rename', {
-        checksum: currentDemoChecksum,
-        displayName,
-      });
+    demoLibraryData = Array.isArray(response.demos) ? response.demos : demoLibraryData;
+    applyDbInfo(response.dbInfo);
+    renderDemoLibrary();
+    renderDbInfoPanel();
+    statusText.innerText = `Renamed demo to '${displayName}'.`;
+    statusText.style.color = '#2ecc71';
+  } catch (error) {
+    statusText.innerText = `Rename fatal error: ${error.message}`;
+    statusText.style.color = '#e74c3c';
+    console.error('[Rename Demo Fatal Error]', error);
+  } finally {
+    isDemoRenaming = false;
+  }
+}
 
-      if (response.status !== 'success') {
-        statusText.innerText = `Rename failed: ${response.message || 'Unknown error'}`;
-        statusText.style.color = '#e74c3c';
-        return;
-      }
+async function deleteDemoFromContextMenu(checksum) {
+  const demo = demoLibraryData.find((item) => item.checksum === checksum);
+  if (!demo) {
+    statusText.innerText = 'Delete failed: demo not found.';
+    statusText.style.color = '#e74c3c';
+    return;
+  }
 
-      if (response.renamedDemo && response.renamedDemo.checksum === currentDemoChecksum) {
-        currentDemoDisplayName = response.renamedDemo.displayName;
-      }
+  const nameForConfirm = demo.displayName || demo.fileName || checksum;
+  const confirmed = window.confirm(`Delete demo '${nameForConfirm}' from local database?`);
+  if (!confirmed) {
+    return;
+  }
 
-      demoLibraryData = Array.isArray(response.demos) ? response.demos : demoLibraryData;
-      applyDbInfo(response.dbInfo);
+  isDemoDeleting = true;
+
+  try {
+    const response = await ipcRenderer.invoke('demo-library-delete', { checksum });
+    if (response.status !== 'success') {
+      statusText.innerText = `Delete failed: ${response.message || 'Unknown error'}`;
+      statusText.style.color = '#e74c3c';
+      return;
+    }
+
+    const wasCurrentDemo = checksum === currentDemoChecksum;
+    demoLibraryData = Array.isArray(response.demos) ? response.demos : [];
+    applyDbInfo(response.dbInfo);
+
+    if (wasCurrentDemo) {
+      resetCurrentDemoState();
+      statusText.innerText = `Deleted demo '${nameForConfirm}'.`;
+      statusText.style.color = '#f39c12';
+    } else {
       renderDemoLibrary();
       renderDbInfoPanel();
-      statusText.innerText = `Renamed demo to '${currentDemoDisplayName || displayName}'.`;
+      statusText.innerText = `Deleted demo '${nameForConfirm}'.`;
       statusText.style.color = '#2ecc71';
-    } catch (error) {
-      statusText.innerText = `Rename fatal error: ${error.message}`;
-      statusText.style.color = '#e74c3c';
-      console.error('[Rename Demo Fatal Error]', error);
-    } finally {
-      isDemoRenaming = false;
-      syncDemoRenameControls();
     }
-  });
+  } catch (error) {
+    statusText.innerText = `Delete fatal error: ${error.message}`;
+    statusText.style.color = '#e74c3c';
+    console.error('[Delete Demo Fatal Error]', error);
+  } finally {
+    isDemoDeleting = false;
+  }
+}
 
-  demoRenameInput.addEventListener('keydown', async (event) => {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      btnDemoRename.click();
+if (demoContextRenameItem) {
+  demoContextRenameItem.addEventListener('click', async () => {
+    const checksum = currentContextMenuChecksum;
+    hideDemoContextMenu();
+    if (!checksum || isDemoBusy()) {
+      return;
     }
+    await renameDemoFromContextMenu(checksum);
+  });
+}
+
+if (demoContextDeleteItem) {
+  demoContextDeleteItem.addEventListener('click', async () => {
+    const checksum = currentContextMenuChecksum;
+    hideDemoContextMenu();
+    if (!checksum || isDemoBusy()) {
+      return;
+    }
+    await deleteDemoFromContextMenu(checksum);
+  });
+}
+
+document.addEventListener('click', (event) => {
+  if (!demoContextMenu || demoContextMenu.classList.contains('is-hidden')) {
+    return;
+  }
+
+  const target = event.target;
+  if (target instanceof Node && demoContextMenu.contains(target)) {
+    return;
+  }
+
+  hideDemoContextMenu();
+});
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    hideDemoContextMenu();
+  }
+});
+
+window.addEventListener('resize', () => {
+  hideDemoContextMenu();
+});
+
+if (demoList) {
+  demoList.addEventListener('scroll', () => {
+    hideDemoContextMenu();
   });
 }
 
@@ -1083,6 +1889,8 @@ if (btnDemoRename && demoRenameInput) {
 btnOpen.addEventListener('click', async () => {
   btnOpen.disabled = true;
   btnOpen.innerText = 'Loading...';
+  hideDemoContextMenu();
+  resetParseJobProgress();
   statusText.innerText = 'Extracting timeline data from demo, please wait...';
   statusText.style.color = '#f39c12';
 
@@ -1141,7 +1949,9 @@ selectMap(DEFAULT_MAP_NAME);
 setupProgressBar(0);
 renderRoundList();
 drawRadarBackground();
+resetParseJobProgress();
 syncParseButtonState();
+syncPlayToggleButtonState();
 renderDbInfoPanel();
 refreshDbInfo();
 refreshDemoLibrary();
