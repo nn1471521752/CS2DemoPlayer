@@ -14,8 +14,36 @@
     </div>
   </div>
 
-  <div class="canvas-container">
-    <canvas id="radar-canvas" width="800" height="800"></canvas>
+  <div class="main-content">
+    <aside class="library-panel">
+      <div class="library-header">
+        <h3>Stored Demos</h3>
+        <button id="btn-refresh-demos" type="button">Refresh</button>
+      </div>
+      <div id="demo-list" class="demo-list">
+        <div class="demo-empty">No demos in database</div>
+      </div>
+      <div class="demo-rename">
+        <input id="demo-rename-input" type="text" placeholder="Rename selected demo" disabled>
+        <button id="btn-demo-rename" type="button" disabled>Rename</button>
+      </div>
+    </aside>
+    <aside class="db-panel">
+      <h3>Database Debug</h3>
+      <div id="db-info" class="db-info">
+        <div class="db-empty">No demo selected</div>
+      </div>
+      <button id="btn-parse-db" disabled>Parse &amp; Save To DB</button>
+    </aside>
+    <div class="canvas-container">
+      <canvas id="radar-canvas" width="800" height="800"></canvas>
+    </div>
+    <aside class="rounds-panel">
+      <h3>Rounds</h3>
+      <div id="round-list" class="round-list">
+        <div class="round-empty">No rounds</div>
+      </div>
+    </aside>
   </div>
 
   <div class="control-panel">

@@ -8,8 +8,8 @@ let mainWindow;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1000,
-    height: 800,
+    width: 1600,
+    height: 900,
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false // MVP阶段先开启，方便前端直接调 require
