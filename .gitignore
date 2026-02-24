@@ -11,6 +11,7 @@ __pycache__/
 .pytest_cache/
 
 # CS2 Demo 录像文件 (体积太大，千万别进版本库)
+data/
 *.dem
 *.sqlite
 *.db
