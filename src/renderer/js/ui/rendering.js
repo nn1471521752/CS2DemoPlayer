@@ -1,32 +1,147 @@
-function worldToCanvas(gameX, gameY, scaleX, scaleY) {
-  const mapMeta = currentMapMeta || DEFAULT_MAP_META;
+const HUD_OUTER_PADDING = 8;
+const HUD_COLUMN_GAP = 8;
+const HUD_PANEL_MIN_WIDTH = 96;
+const HUD_PANEL_MAX_WIDTH = 180;
+const HUD_MIN_MAP_SIZE = 360;
+const HUD_PLAYER_SLOT_GAP = 10;
+const HUD_PLAYER_SLOT_MIN_HEIGHT = 52;
+const HUD_PLAYER_SLOT_MAX_HEIGHT = 70;
+const HUD_PLAYER_SLOTS = 5;
+const DISPLAY_TICKRATE = 32;
 
-  // CS2 world -> radar pixels
-  const pixelX = (gameX - mapMeta.pos_x) / mapMeta.scale;
-  const pixelY = (mapMeta.pos_y - gameY) / mapMeta.scale;
+let currentMapViewport = {
+  x: 0,
+  y: 0,
+  width: canvas.width,
+  height: canvas.height,
+  scaleX: canvas.width / DEFAULT_RADAR_SIZE,
+  scaleY: canvas.height / DEFAULT_RADAR_SIZE,
+};
+let currentPlaybackTick = 0;
 
-  // Radar pixels -> current canvas pixels
+function lerpNumber(startValue, endValue, alpha) {
+  return startValue + ((endValue - startValue) * alpha);
+}
+
+function lerpAngleDegrees(startDegrees, endDegrees, alpha) {
+  let delta = (endDegrees - startDegrees) % 360;
+  if (delta > 180) {
+    delta -= 360;
+  } else if (delta < -180) {
+    delta += 360;
+  }
+
+  return startDegrees + (delta * alpha);
+}
+
+function getPlaybackSubstepsPerTick() {
+  return Math.max(1, Math.round(DISPLAY_TICKRATE / Math.max(currentTickrate, 1)));
+}
+
+function quantizePlaybackTick(tickValue) {
+  const substeps = getPlaybackSubstepsPerTick();
+  return Math.round(tickValue * substeps) / substeps;
+}
+
+function buildFullCanvasMapViewport() {
+  const radarSize = currentRadarSize > 0 ? currentRadarSize : DEFAULT_RADAR_SIZE;
   return {
-    x: pixelX * scaleX,
-    y: pixelY * scaleY
+    x: 0,
+    y: 0,
+    width: canvas.width,
+    height: canvas.height,
+    scaleX: canvas.width / radarSize,
+    scaleY: canvas.height / radarSize,
   };
 }
 
-function drawFallbackBackground() {
-  ctx.fillStyle = '#222';
+function updateMapViewport(viewport) {
+  if (!viewport || !Number.isFinite(Number(viewport.width)) || !Number.isFinite(Number(viewport.height))) {
+    currentMapViewport = buildFullCanvasMapViewport();
+    return currentMapViewport;
+  }
+
+  const radarSize = currentRadarSize > 0 ? currentRadarSize : DEFAULT_RADAR_SIZE;
+  const safeWidth = Math.max(1, Number(viewport.width));
+  const safeHeight = Math.max(1, Number(viewport.height));
+  currentMapViewport = {
+    x: Number(viewport.x) || 0,
+    y: Number(viewport.y) || 0,
+    width: safeWidth,
+    height: safeHeight,
+    scaleX: safeWidth / radarSize,
+    scaleY: safeHeight / radarSize,
+  };
+  return currentMapViewport;
+}
+
+function buildCanvasHudLayout() {
+  const outer = HUD_OUTER_PADDING;
+  const innerWidth = Math.max(canvas.width - (outer * 2), 1);
+  const innerHeight = Math.max(canvas.height - (outer * 2), 1);
+  const maxPanelWidthByCanvas = (innerWidth - (HUD_COLUMN_GAP * 2) - HUD_MIN_MAP_SIZE) / 2;
+  const desiredPanelWidth = clamp(innerWidth * 0.11, HUD_PANEL_MIN_WIDTH, HUD_PANEL_MAX_WIDTH);
+  const panelWidth = clamp(desiredPanelWidth, 40, Math.max(40, maxPanelWidthByCanvas));
+  const availableMapSize = Math.max(1, innerWidth - (panelWidth * 2) - (HUD_COLUMN_GAP * 2));
+  const mapSize = Math.max(Math.min(HUD_MIN_MAP_SIZE, availableMapSize), Math.min(innerHeight, availableMapSize));
+  const contentWidth = (panelWidth * 2) + (HUD_COLUMN_GAP * 2) + mapSize;
+  const contentStartX = outer + ((innerWidth - contentWidth) / 2);
+  const mapX = contentStartX + panelWidth + HUD_COLUMN_GAP;
+  const mapY = outer + ((innerHeight - mapSize) / 2);
+  const rightPanelX = mapX + mapSize + HUD_COLUMN_GAP;
+
+  return {
+    leftPanel: { x: contentStartX, y: outer, width: panelWidth, height: innerHeight },
+    map: { x: mapX, y: mapY, width: mapSize, height: mapSize },
+    rightPanel: { x: rightPanelX, y: outer, width: panelWidth, height: innerHeight },
+    killArea: {
+      x: canvas.width - outer - Math.min(420, canvas.width * 0.34),
+      y: outer + 4,
+      width: Math.min(420, canvas.width * 0.34),
+    },
+  };
+}
+
+function worldToCanvas(gameX, gameY, scaleX, scaleY) {
+  const mapMeta = currentMapMeta || DEFAULT_MAP_META;
+  const safeScaleX = Number.isFinite(Number(scaleX)) ? Number(scaleX) : currentMapViewport.scaleX;
+  const safeScaleY = Number.isFinite(Number(scaleY)) ? Number(scaleY) : currentMapViewport.scaleY;
+  const pixelX = (gameX - mapMeta.pos_x) / mapMeta.scale;
+  const pixelY = (mapMeta.pos_y - gameY) / mapMeta.scale;
+
+  return {
+    x: currentMapViewport.x + (pixelX * safeScaleX),
+    y: currentMapViewport.y + (pixelY * safeScaleY),
+  };
+}
+
+function drawCanvasBackdrop() {
+  const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+  gradient.addColorStop(0, '#0b1018');
+  gradient.addColorStop(1, '#0f1724');
+  ctx.fillStyle = gradient;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
+}
+
+function drawFallbackBackground(viewport = currentMapViewport) {
+  const target = viewport || buildFullCanvasMapViewport();
+  ctx.fillStyle = '#222';
+  ctx.fillRect(target.x, target.y, target.width, target.height);
 
   if (radarImageFailed) {
     ctx.fillStyle = '#888';
     ctx.font = '14px Segoe UI';
-    ctx.fillText(`Radar image missing: ${currentRadarImagePath}`, 16, 26);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillText(`Radar image missing: ${currentRadarImagePath}`, target.x + 16, target.y + 16);
   }
 }
 
-function drawRadarBackground() {
+function drawRadarBackground(viewport = currentMapViewport) {
+  const target = viewport || buildFullCanvasMapViewport();
   if (radarImageReady && radarImg.naturalWidth > 0 && radarImg.naturalHeight > 0) {
     try {
-      ctx.drawImage(radarImg, 0, 0, canvas.width, canvas.height);
+      ctx.drawImage(radarImg, target.x, target.y, target.width, target.height);
       return;
     } catch (err) {
       radarImageReady = false;
@@ -35,7 +150,11 @@ function drawRadarBackground() {
     }
   }
 
-  drawFallbackBackground();
+  drawFallbackBackground(target);
+}
+
+function drawMapFrame(viewport) {
+  drawRadarBackground(viewport);
 }
 
 function worldRadiusToCanvasRadius(worldRadius, scaleX, scaleY) {
@@ -378,6 +497,80 @@ function collectGrenadeTrails(firstTrailFrame, safeFrameIndex) {
   return trailsByEntity;
 }
 
+function getGrenadeInterpolationKey(grenade) {
+  if (!grenade || typeof grenade !== 'object') {
+    return '';
+  }
+
+  if (grenade.entity_id !== undefined && grenade.entity_id !== null) {
+    return String(grenade.entity_id);
+  }
+
+  const x = Number(grenade.x) || 0;
+  const y = Number(grenade.y) || 0;
+  const z = Number(grenade.z) || 0;
+  return `${grenade.grenade_type || 'unknown'}-${Math.round(x)}-${Math.round(y)}-${Math.round(z)}`;
+}
+
+function buildGrenadeMapByKey(grenades) {
+  const map = new Map();
+  if (!Array.isArray(grenades)) {
+    return map;
+  }
+
+  for (const grenade of grenades) {
+    const key = getGrenadeInterpolationKey(grenade);
+    if (key) {
+      map.set(key, grenade);
+    }
+  }
+  return map;
+}
+
+function buildInterpolatedGrenadePoints(lowerFrameIndex, upperFrameIndex, alpha) {
+  if (!Number.isFinite(alpha) || alpha <= 0 || upperFrameIndex <= lowerFrameIndex) {
+    return null;
+  }
+
+  const lowerGrenades = framesData[lowerFrameIndex]?.grenades;
+  const upperGrenades = framesData[upperFrameIndex]?.grenades;
+  if (!Array.isArray(lowerGrenades) || !Array.isArray(upperGrenades)) {
+    return null;
+  }
+
+  const lowerByKey = buildGrenadeMapByKey(lowerGrenades);
+  const interpolated = new Map();
+  for (const upperGrenade of upperGrenades) {
+    const key = getGrenadeInterpolationKey(upperGrenade);
+    const lowerGrenade = lowerByKey.get(key);
+    if (!key || !lowerGrenade) {
+      continue;
+    }
+
+    const lowerX = Number(lowerGrenade.x);
+    const lowerY = Number(lowerGrenade.y);
+    const lowerZ = Number(lowerGrenade.z);
+    const upperX = Number(upperGrenade.x);
+    const upperY = Number(upperGrenade.y);
+    const upperZ = Number(upperGrenade.z);
+    if (!Number.isFinite(lowerX) || !Number.isFinite(lowerY) || !Number.isFinite(lowerZ)) {
+      continue;
+    }
+    if (!Number.isFinite(upperX) || !Number.isFinite(upperY) || !Number.isFinite(upperZ)) {
+      continue;
+    }
+
+    interpolated.set(key, {
+      x: lerpNumber(lowerX, upperX, alpha),
+      y: lerpNumber(lowerY, upperY, alpha),
+      z: lerpNumber(lowerZ, upperZ, alpha),
+      frameIndex: lowerFrameIndex + alpha,
+    });
+  }
+
+  return interpolated.size > 0 ? interpolated : null;
+}
+
 function drawGrenadeTrailLine(points, scaleX, scaleY) {
   if (points.length <= 1) {
     return;
@@ -414,7 +607,15 @@ function drawGrenadeTrailVisual(trail, visiblePoints, scaleX, scaleY, unitScale)
   drawGrenadeTrailEndpoint(visiblePoints, scaleX, scaleY, unitScale);
 }
 
-function drawGrenadeTrailWithEffect(trail, firstTrailFrame, safeFrameIndex, scaleX, scaleY, unitScale) {
+function drawGrenadeTrailWithEffect(
+  trail,
+  firstTrailFrame,
+  safeFrameIndex,
+  scaleX,
+  scaleY,
+  unitScale,
+  interpolatedPointsByEntity = null,
+) {
   if (!Array.isArray(trail.points) || trail.points.length === 0 || trail.lastSeenFrameIndex < firstTrailFrame) {
     return;
   }
@@ -427,36 +628,217 @@ function drawGrenadeTrailWithEffect(trail, firstTrailFrame, safeFrameIndex, scal
     return;
   }
 
-  const visiblePoints = trail.points.filter((point) => point.frameIndex <= effectState.trailVisibleUntilFrame);
+  let visiblePoints = trail.points.filter((point) => point.frameIndex <= effectState.trailVisibleUntilFrame);
+  const interpolatedPoint = interpolatedPointsByEntity?.get(trail.entityId) || null;
+  if (interpolatedPoint) {
+    const mergedPoints = [...visiblePoints];
+    const lastPoint = mergedPoints[mergedPoints.length - 1] || null;
+    if (!lastPoint || interpolatedPoint.frameIndex >= lastPoint.frameIndex) {
+      mergedPoints.push(interpolatedPoint);
+      visiblePoints = mergedPoints;
+    }
+  }
+
   if (visiblePoints.length > 0) {
     drawGrenadeTrailVisual(trail, visiblePoints, scaleX, scaleY, unitScale);
   }
 }
 
-function drawGrenadeTrails(frameIndex, scaleX, scaleY, unitScale) {
+function drawGrenadeTrails(frameIndex, scaleX, scaleY, unitScale, interpolation = null) {
   if (!framesData.length) {
     return;
   }
 
   const safeFrameIndex = clamp(frameIndex, 0, framesData.length - 1);
-  const firstTrailFrame = Math.max(0, safeFrameIndex - getGrenadeLookbackFrameCount());
-  const trailsByEntity = collectGrenadeTrails(firstTrailFrame, safeFrameIndex);
+  const floorFrameIndex = Math.floor(safeFrameIndex);
+  const firstTrailFrame = Math.max(0, floorFrameIndex - getGrenadeLookbackFrameCount());
+  const trailsByEntity = collectGrenadeTrails(firstTrailFrame, floorFrameIndex);
+  const interpolatedPointsByEntity = buildInterpolatedGrenadePoints(
+    floorFrameIndex,
+    Number(interpolation?.upperIndex ?? floorFrameIndex + 1),
+    Number(interpolation?.alpha ?? 0),
+  );
 
   for (const trail of trailsByEntity.values()) {
-    drawGrenadeTrailWithEffect(trail, firstTrailFrame, safeFrameIndex, scaleX, scaleY, unitScale);
+    drawGrenadeTrailWithEffect(
+      trail,
+      firstTrailFrame,
+      safeFrameIndex,
+      scaleX,
+      scaleY,
+      unitScale,
+      interpolatedPointsByEntity,
+    );
   }
 }
 
 function getCanvasScale() {
   const radarSize = currentRadarSize > 0 ? currentRadarSize : DEFAULT_RADAR_SIZE;
-  const scaleX = canvas.width / radarSize;
-  const scaleY = canvas.height / radarSize;
+  const scaleX = currentMapViewport.width / radarSize;
+  const scaleY = currentMapViewport.height / radarSize;
   const unitScale = Math.max(Math.min(scaleX, scaleY), 0.5);
   return { scaleX, scaleY, unitScale };
 }
 
 function getPlayerTeamColor(player) {
-  return player.team_num === 2 ? '#f1c40f' : '#2ec4ff';
+  if (typeof getTeamColorHex === 'function') {
+    return getTeamColorHex(player?.team_num);
+  }
+  return Number(player?.team_num) === TEAM_NUM_T ? '#facc15' : '#38bdf8';
+}
+
+function buildTeamSlotRects(panelRect) {
+  const inset = 4;
+  const bodyX = panelRect.x + inset;
+  const bodyY = panelRect.y + inset;
+  const bodyWidth = Math.max(1, panelRect.width - (inset * 2));
+  const bodyHeight = Math.max(1, panelRect.height - (inset * 2));
+  const slotHeight = clamp(bodyHeight * 0.13, HUD_PLAYER_SLOT_MIN_HEIGHT, HUD_PLAYER_SLOT_MAX_HEIGHT);
+  const totalHeight = (slotHeight * HUD_PLAYER_SLOTS) + (HUD_PLAYER_SLOT_GAP * (HUD_PLAYER_SLOTS - 1));
+  const startY = bodyY + ((bodyHeight - totalHeight) / 2);
+  const slots = [];
+
+  for (let slotIndex = 0; slotIndex < HUD_PLAYER_SLOTS; slotIndex += 1) {
+    const slotY = startY + (slotIndex * (slotHeight + HUD_PLAYER_SLOT_GAP));
+    slots.push({ x: bodyX, y: slotY, width: bodyWidth, height: slotHeight });
+  }
+
+  return slots;
+}
+
+function drawTeamSlotHud(player, slotRect, slotIndex, teamNum, unitScale) {
+  const isEmpty = !player;
+  const hp = clamp(coerceNonNegativeInteger(player?.health, 0), 0, 100);
+  const isDead = !isEmpty && (player.is_alive === false || hp <= 0);
+  const slotOpacity = isEmpty ? 0.42 : (isDead ? 0.62 : 1);
+  const idLabel = isEmpty ? `Empty #${slotIndex + 1}` : (getPlayerIdLabel(player) || `Player ${slotIndex + 1}`);
+  const hpText = `HP ${hp}`;
+  const teamColor = getTeamColorHex(player?.team_num || teamNum);
+  const money = isEmpty ? '$0' : `$${coerceNonNegativeInteger(player?.balance, 0)}`;
+  const barInset = Math.max(4, 4 * unitScale);
+  const barHeight = Math.max(7, 7 * unitScale);
+  const barY = slotRect.y + ((slotRect.height - barHeight) / 2);
+  const barWidth = Math.max(1, slotRect.width - (barInset * 2));
+  const fillWidth = barWidth * (hp / 100);
+  const labelY = barY - Math.max(4, 5 * unitScale);
+  const valueY = barY + barHeight + Math.max(10, 9 * unitScale);
+
+  ctx.save();
+  ctx.globalAlpha = slotOpacity;
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.13)';
+  ctx.fillRect(slotRect.x + barInset, barY, barWidth, barHeight);
+  ctx.fillStyle = teamColor;
+  ctx.fillRect(slotRect.x + barInset, barY, fillWidth, barHeight);
+  ctx.font = `700 ${Math.max(11, 11 * unitScale)}px Segoe UI`;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'bottom';
+  ctx.fillStyle = teamColor;
+  ctx.fillText(idLabel, slotRect.x + barInset, labelY);
+  ctx.font = `600 ${Math.max(10, 10 * unitScale)}px Segoe UI`;
+  ctx.textBaseline = 'top';
+  ctx.fillStyle = '#dbe4f1';
+  ctx.fillText(hpText, slotRect.x + barInset, valueY);
+  ctx.textAlign = 'right';
+  ctx.fillText(money, slotRect.x + slotRect.width - barInset, valueY);
+  ctx.restore();
+}
+
+function drawTeamPanelHud(panelRect, teamNum, slots, unitScale) {
+  const slotRects = buildTeamSlotRects(panelRect);
+
+  for (let index = 0; index < slotRects.length; index += 1) {
+    const slotPlayer = Array.isArray(slots) ? slots[index] : null;
+    drawTeamSlotHud(slotPlayer, slotRects[index], index, teamNum, unitScale);
+  }
+}
+
+function fitTextByWidth(text, maxWidth) {
+  const rawText = String(text || '').trim() || '?';
+  if (ctx.measureText(rawText).width <= maxWidth) {
+    return rawText;
+  }
+
+  const suffix = '...';
+  let current = rawText;
+  while (current.length > 1 && ctx.measureText(`${current}${suffix}`).width > maxWidth) {
+    current = current.slice(0, -1);
+  }
+  return `${current}${suffix}`;
+}
+
+function drawKillWeaponIcon(kill, iconX, iconY, iconSize, unitScale) {
+  ctx.save();
+  ctx.globalAlpha = 0.86;
+  ctx.filter = 'grayscale(1) brightness(1.18)';
+  const iconDrawn = drawWeaponIconOnCanvas(ctx, kill.rawWeapon, iconX, iconY, iconSize);
+  ctx.filter = 'none';
+  ctx.globalAlpha = 1;
+  if (!iconDrawn) {
+    drawWeaponFallbackLabel(kill.rawWeapon, iconX, iconY, iconSize, unitScale);
+  }
+  if (kill.headshot) {
+    ctx.fillStyle = '#ef4444';
+    ctx.beginPath();
+    ctx.arc(iconX + iconSize + 4, iconY + (iconSize / 2), Math.max(2, 2 * unitScale), 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawKillFeedHud(frameIndex, layout, unitScale) {
+  if (typeof getKillFeedItemsForFrame !== 'function') {
+    return;
+  }
+
+  const kills = getKillFeedItemsForFrame(frameIndex);
+  if (!Array.isArray(kills) || kills.length === 0) {
+    return;
+  }
+
+  const drawCount = Math.min(kills.length, 6);
+  const rowHeight = Math.max(22, 22 * unitScale);
+  const rowGap = Math.max(6, 6 * unitScale);
+  const rowRadius = Math.max(6, 6 * unitScale);
+  const iconSize = Math.max(14, rowHeight - 8);
+  const fontSize = Math.max(11, 11 * unitScale);
+  const areaWidth = Math.max(200, layout.killArea.width);
+  const rowWidth = Math.min(360, areaWidth);
+  let rowY = layout.killArea.y;
+
+  for (let index = 0; index < drawCount; index += 1) {
+    const kill = kills[index];
+    const rowX = layout.killArea.x + (areaWidth - rowWidth);
+    const rowRect = { x: rowX, y: rowY, width: rowWidth, height: rowHeight };
+    const iconX = rowRect.x + ((rowRect.width - iconSize) / 2);
+    const iconY = rowRect.y + ((rowRect.height - iconSize) / 2);
+    const sideGap = Math.max(6, 6 * unitScale);
+    const sideWidth = Math.max(20, ((rowRect.width - iconSize) / 2) - (sideGap * 2));
+
+    ctx.save();
+    ctx.font = `700 ${fontSize}px Segoe UI`;
+    ctx.textBaseline = 'middle';
+    const attackerText = fitTextByWidth(kill.attacker, sideWidth);
+    const victimText = fitTextByWidth(kill.victim, sideWidth);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = getTeamColorHex(kill.attackerTeamNum);
+    ctx.fillText(attackerText, iconX - sideGap, rowRect.y + (rowRect.height / 2));
+    ctx.textAlign = 'left';
+    ctx.fillStyle = getTeamColorHex(kill.victimTeamNum);
+    ctx.fillText(victimText, iconX + iconSize + sideGap, rowRect.y + (rowRect.height / 2));
+    drawKillWeaponIcon(kill, iconX, iconY, iconSize, unitScale);
+    ctx.restore();
+
+    rowY += rowHeight + rowGap;
+  }
+}
+
+function drawCanvasHud(players, frameIndex, layout, unitScale) {
+  const slotsByTeam = typeof getHudTeamSlotsForFrame === 'function'
+    ? getHudTeamSlotsForFrame(players)
+    : { [TEAM_NUM_T]: [], [TEAM_NUM_CT]: [] };
+  drawTeamPanelHud(layout.leftPanel, TEAM_NUM_T, slotsByTeam[TEAM_NUM_T], unitScale);
+  drawTeamPanelHud(layout.rightPanel, TEAM_NUM_CT, slotsByTeam[TEAM_NUM_CT], unitScale);
+  drawKillFeedHud(frameIndex, layout, unitScale);
 }
 
 function drawRoundedRectPath(x, y, width, height, radius) {
@@ -605,44 +987,205 @@ function isPlayerAliveForRadar(player) {
   return player?.is_alive !== false;
 }
 
-function renderFrame(players, frameIndex = 0) {
+function resolvePlayerInterpolationKey(player, index = 0) {
+  if (!player || typeof player !== 'object') {
+    return `slot:${index}`;
+  }
+
+  if (typeof getPlayerStableKey === 'function') {
+    const stableKey = getPlayerStableKey(player);
+    if (stableKey) {
+      return stableKey;
+    }
+  }
+
+  const userId = Number(player.user_id);
+  if (Number.isFinite(userId) && userId > 0) {
+    return `uid:${Math.floor(userId)}`;
+  }
+
+  const name = String(player.name || '').trim();
+  if (name) {
+    return `name:${name}`;
+  }
+
+  return `slot:${index}`;
+}
+
+function mapPlayersByInterpolationKey(players) {
+  const map = new Map();
+  if (!Array.isArray(players)) {
+    return map;
+  }
+
+  players.forEach((player, index) => {
+    map.set(resolvePlayerInterpolationKey(player, index), player);
+  });
+  return map;
+}
+
+function interpolatePlayerRecord(lowerPlayer, upperPlayer, alpha) {
+  if (!lowerPlayer && !upperPlayer) {
+    return null;
+  }
+
+  if (!lowerPlayer) {
+    return { ...upperPlayer };
+  }
+
+  if (!upperPlayer) {
+    return { ...lowerPlayer };
+  }
+
+  const lowerX = Number(lowerPlayer.X);
+  const lowerY = Number(lowerPlayer.Y);
+  const upperX = Number(upperPlayer.X);
+  const upperY = Number(upperPlayer.Y);
+  const lowerYaw = Number(lowerPlayer.yaw) || 0;
+  const upperYaw = Number(upperPlayer.yaw) || 0;
+  const lowerHealth = Number(lowerPlayer.health);
+  const upperHealth = Number(upperPlayer.health);
+  const lowerBalance = Number(lowerPlayer.balance);
+  const upperBalance = Number(upperPlayer.balance);
+
+  return {
+    ...lowerPlayer,
+    ...upperPlayer,
+    X: Number.isFinite(lowerX) && Number.isFinite(upperX) ? lerpNumber(lowerX, upperX, alpha) : (upperPlayer.X ?? lowerPlayer.X),
+    Y: Number.isFinite(lowerY) && Number.isFinite(upperY) ? lerpNumber(lowerY, upperY, alpha) : (upperPlayer.Y ?? lowerPlayer.Y),
+    yaw: lerpAngleDegrees(lowerYaw, upperYaw, alpha),
+    health: Number.isFinite(lowerHealth) && Number.isFinite(upperHealth)
+      ? Math.max(0, Math.round(lerpNumber(lowerHealth, upperHealth, alpha)))
+      : (upperPlayer.health ?? lowerPlayer.health ?? 0),
+    balance: Number.isFinite(lowerBalance) && Number.isFinite(upperBalance)
+      ? Math.max(0, Math.round(lerpNumber(lowerBalance, upperBalance, alpha)))
+      : (upperPlayer.balance ?? lowerPlayer.balance ?? 0),
+    is_alive: alpha < 1 ? lowerPlayer.is_alive !== false : upperPlayer.is_alive !== false,
+  };
+}
+
+function buildInterpolatedPlayers(lowerPlayers, upperPlayers, alpha) {
+  if (!Number.isFinite(alpha) || alpha <= 0) {
+    return Array.isArray(lowerPlayers) ? lowerPlayers : [];
+  }
+
+  const lowerByKey = mapPlayersByInterpolationKey(lowerPlayers);
+  const upperByKey = mapPlayersByInterpolationKey(upperPlayers);
+  const keys = new Set([...lowerByKey.keys(), ...upperByKey.keys()]);
+  const players = [];
+
+  for (const key of keys) {
+    const interpolatedPlayer = interpolatePlayerRecord(lowerByKey.get(key), upperByKey.get(key), alpha);
+    if (interpolatedPlayer) {
+      players.push(interpolatedPlayer);
+    }
+  }
+
+  return players;
+}
+
+function findFrameIndexByTick(targetTick) {
+  let left = 0;
+  let right = Math.max(framesData.length - 1, 0);
+  let answer = 0;
+
+  while (left <= right) {
+    const mid = Math.floor((left + right) / 2);
+    const midTick = getFrameTick(mid);
+    if (midTick <= targetTick) {
+      answer = mid;
+      left = mid + 1;
+    } else {
+      right = mid - 1;
+    }
+  }
+
+  return answer;
+}
+
+function resolveFrameBlendByTick(targetTick) {
+  if (!framesData.length) {
+    return { lowerIndex: 0, upperIndex: 0, alpha: 0, tick: currentRoundStartTick };
+  }
+
+  const firstTick = getFrameTick(0);
+  const lastTick = getFrameTick(framesData.length - 1);
+  const safeTick = clamp(targetTick, firstTick, lastTick);
+  const lowerIndex = findFrameIndexByTick(safeTick);
+  const upperIndex = Math.min(lowerIndex + 1, framesData.length - 1);
+  const lowerTick = getFrameTick(lowerIndex);
+  const upperTick = getFrameTick(upperIndex);
+  const tickDistance = upperTick - lowerTick;
+  const alpha = tickDistance > 0 ? clamp((safeTick - lowerTick) / tickDistance, 0, 1) : 0;
+
+  return { lowerIndex, upperIndex, alpha, tick: safeTick };
+}
+
+function renderFrame(players, frameIndex = 0, renderTick = null, grenadeInterpolation = null) {
+  const safePlayers = Array.isArray(players) ? players : [];
+  const layout = buildCanvasHudLayout();
+  updateMapViewport(layout.map);
+
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  drawRadarBackground();
+  drawCanvasBackdrop();
+  drawMapFrame(currentMapViewport);
   const { scaleX, scaleY, unitScale } = getCanvasScale();
 
-  drawGrenadeTrails(frameIndex, scaleX, scaleY, unitScale);
-  if (typeof renderTeamPanelsForFrame === 'function') {
-    renderTeamPanelsForFrame(Array.isArray(players) ? players : []);
-  }
-  if (typeof renderKillFeedByFrame === 'function') {
-    renderKillFeedByFrame(frameIndex);
-  }
-
-  if (!Array.isArray(players)) {
-    return;
-  }
-
-  players.forEach((player) => {
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(currentMapViewport.x, currentMapViewport.y, currentMapViewport.width, currentMapViewport.height);
+  ctx.clip();
+  const grenadeFrameIndex = Number.isFinite(Number(renderTick)) ? Number(renderTick) : frameIndex;
+  drawGrenadeTrails(grenadeFrameIndex, scaleX, scaleY, unitScale, grenadeInterpolation);
+  safePlayers.forEach((player) => {
     if (isPlayerAliveForRadar(player)) {
       drawPlayer(player, scaleX, scaleY, unitScale);
     }
   });
+  ctx.restore();
+
+  drawCanvasHud(safePlayers, frameIndex, layout, unitScale);
+}
+
+function renderEmptyFrame() {
+  if (typeof resetHudState === 'function') {
+    resetHudState();
+  }
+  renderFrame([], 0, currentRoundStartTick);
 }
 
 function renderFrameByIndex(index) {
   if (!framesData.length) {
-    drawRadarBackground();
-    if (typeof resetHudState === 'function') {
-      resetHudState();
-    }
+    currentPlaybackTick = currentRoundStartTick;
+    renderEmptyFrame();
     return 0;
   }
 
   const safeIndex = clamp(index, 0, framesData.length - 1);
-  const frame = framesData[safeIndex] || { players: [] };
-  renderFrame(frame.players || [], safeIndex);
-  updateProgressBar(safeIndex);
-  return safeIndex;
+  const targetTick = getFrameTick(safeIndex);
+  currentPlaybackTick = targetTick;
+  return renderFrameByTick(targetTick);
+}
+
+function renderFrameByTick(targetTick) {
+  if (!framesData.length) {
+    currentPlaybackTick = currentRoundStartTick;
+    renderEmptyFrame();
+    return 0;
+  }
+
+  const blend = resolveFrameBlendByTick(targetTick);
+  const lowerFrame = framesData[blend.lowerIndex] || { players: [] };
+  const upperFrame = framesData[blend.upperIndex] || lowerFrame;
+  const players = buildInterpolatedPlayers(lowerFrame.players, upperFrame.players, blend.alpha);
+  currentFrameIndex = blend.lowerIndex;
+  currentPlaybackTick = blend.tick;
+  renderFrame(players, blend.lowerIndex, blend.tick, {
+    upperIndex: blend.upperIndex,
+    alpha: blend.alpha,
+  });
+  updateProgressBar(blend.lowerIndex, blend.tick);
+  return blend.lowerIndex;
 }
 
 function findFrameIndexForTargetTick(startIndex, targetTick) {
@@ -670,29 +1213,35 @@ function preparePlaybackAdvance(timestampMs) {
 
 function advancePlaybackByTimestamp(timestampMs) {
   const elapsedMs = Math.max(timestampMs - playbackLastTimestamp, 0);
-  const ticksToAdvance = Math.floor((elapsedMs / 1000) * currentTickrate * PLAYBACK_SPEED);
+  const ticksToAdvance = (elapsedMs / 1000) * currentTickrate * PLAYBACK_SPEED;
   if (ticksToAdvance <= 0) {
     return;
   }
 
-  const currentTick = getFrameTick(currentFrameIndex);
-  const targetTick = currentTick + ticksToAdvance;
-  const nextIndex = findFrameIndexForTargetTick(currentFrameIndex, targetTick);
-  if (nextIndex !== currentFrameIndex) {
-    currentFrameIndex = nextIndex;
-    renderFrameByIndex(currentFrameIndex);
+  const firstTick = getFrameTick(0);
+  const lastTick = getFrameTick(framesData.length - 1);
+  if (!Number.isFinite(currentPlaybackTick) || currentPlaybackTick < firstTick || currentPlaybackTick > lastTick) {
+    currentPlaybackTick = getFrameTick(currentFrameIndex);
   }
 
-  const msPerTick = 1000 / Math.max(currentTickrate * PLAYBACK_SPEED, 1);
-  playbackLastTimestamp = timestampMs - (elapsedMs % msPerTick);
+  currentPlaybackTick = clamp(currentPlaybackTick + ticksToAdvance, firstTick, lastTick);
+  currentPlaybackTick = clamp(quantizePlaybackTick(currentPlaybackTick), firstTick, lastTick);
+  renderFrameByTick(currentPlaybackTick);
+  playbackLastTimestamp = timestampMs;
 }
 
 function finishPlaybackWhenEnded() {
-  if (currentFrameIndex < framesData.length - 1) {
+  if (!framesData.length) {
     return false;
   }
 
-  renderFrameByIndex(framesData.length - 1);
+  const finalTick = getFrameTick(framesData.length - 1);
+  if (currentPlaybackTick < finalTick) {
+    return false;
+  }
+
+  currentPlaybackTick = finalTick;
+  renderFrameByTick(finalTick);
   pausePlayback();
   if (activeRoundIndex >= 0 && roundsData[activeRoundIndex]) {
     setStatus(`Round ${roundsData[activeRoundIndex].number} playback finished`);

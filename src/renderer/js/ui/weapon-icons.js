@@ -188,6 +188,15 @@ function buildWeaponIconPath(iconId) {
   return `${WEAPON_ICON_DIRECTORY}/${iconFilename}`;
 }
 
+function getWeaponIconPath(rawWeaponName) {
+  const iconId = resolveWeaponIconId(rawWeaponName);
+  if (!iconId) {
+    return '';
+  }
+
+  return buildWeaponIconPath(iconId);
+}
+
 function createWeaponIconEntry(iconId) {
   const image = new Image();
   const entry = { iconId, image, loaded: false, failed: false };

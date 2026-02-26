@@ -7,9 +7,9 @@ function createDemoLibraryPlaceholder(message) {
 
 const ROUND_ECONOMY_TEXT_BY_CODE = Object.freeze({
   pistol: '手枪局',
-  eco: 'ECO',
-  force: '强起',
-  rifle: '长枪',
+  eco: 'ECO局',
+  force: '强起局',
+  rifle: '长枪局',
   unknown: '待定',
 });
 
@@ -96,7 +96,7 @@ function applyDemoResponseToUi(response) {
 
   setupProgressBar(0);
   renderRoundList();
-  drawRadarBackground();
+  renderFrameByIndex(0);
   if (typeof resetHudState === 'function') {
     resetHudState();
   }
@@ -249,7 +249,7 @@ function setupProgressBar(totalFrames) {
   syncPlayToggleButtonState();
 }
 
-function updateProgressBar(frameIndex) {
+function updateProgressBar(frameIndex, tickOverride = null) {
   if (!framesData.length) {
     progressBar.value = '0';
     progressText.innerText = '00:00/00:00';
@@ -258,7 +258,8 @@ function updateProgressBar(frameIndex) {
 
   const safeIndex = clamp(frameIndex, 0, framesData.length - 1);
   progressBar.value = String(safeIndex);
-  const elapsedSeconds = Math.max((getFrameTick(safeIndex) - currentRoundStartTick) / currentTickrate, 0);
+  const effectiveTick = Number.isFinite(Number(tickOverride)) ? Number(tickOverride) : getFrameTick(safeIndex);
+  const elapsedSeconds = Math.max((effectiveTick - currentRoundStartTick) / currentTickrate, 0);
   progressText.innerText = `${formatMatchClock(elapsedSeconds)}/${formatMatchClock(getRoundDurationSeconds())}`;
 }
 
@@ -349,7 +350,7 @@ function handleRoundLoadSuccess(round, response) {
 
   if (!framesData.length) {
     setStatus(`Round ${round.number} loaded from ${sourceLabel}, but has no playable frames.`, '#f39c12');
-    drawRadarBackground();
+    renderFrameByIndex(0);
     renderDbInfoPanel();
     return;
   }
@@ -522,14 +523,21 @@ function formatRoundEconomySummary(round) {
   const ctCode = normalizeRoundEconomyCode(round?.ct_economy);
   const tValue = coerceNonNegativeInteger(round?.t_equip_value, 0);
   const ctValue = coerceNonNegativeInteger(round?.ct_equip_value, 0);
-
-  if (tCode === 'unknown' && ctCode === 'unknown' && tValue <= 0 && ctValue <= 0) {
-    return '经济: 待分析';
+  const roundNumber = coerceNonNegativeInteger(round?.number, 0);
+  let fullRoundCode = 'force';
+  if (roundNumber === 1 || roundNumber === 13) {
+    fullRoundCode = 'pistol';
+  } else if (tCode === 'rifle' && ctCode === 'rifle') {
+    fullRoundCode = 'rifle';
+  } else if (tCode === 'eco' && ctCode === 'eco') {
+    fullRoundCode = 'eco';
+  } else if (tCode === 'pistol' && ctCode === 'pistol') {
+    fullRoundCode = 'pistol';
+  } else if (tCode === 'unknown' && ctCode === 'unknown' && tValue <= 0 && ctValue <= 0) {
+    fullRoundCode = 'unknown';
   }
-
-  const tLabel = ROUND_ECONOMY_TEXT_BY_CODE[tCode];
-  const ctLabel = ROUND_ECONOMY_TEXT_BY_CODE[ctCode];
-  return `T ${tLabel} ($${tValue}) | CT ${ctLabel} ($${ctValue})`;
+  const label = ROUND_ECONOMY_TEXT_BY_CODE[fullRoundCode] || ROUND_ECONOMY_TEXT_BY_CODE.unknown;
+  return `经济: ${label} | T $${tValue} | CT $${ctValue}`;
 }
 
 function buildRoundMetaText(round) {
@@ -561,7 +569,10 @@ function createRoundNoteEditor(roundNumber) {
   saveButton.addEventListener('click', (event) => {
     event.stopPropagation();
     const saved = saveRoundNote(roundNumber, input.value);
-    setStatus(saved ? `Round ${roundNumber} 备注已保存` : `Round ${roundNumber} 备注保存失败`, saved ? '#2ecc71' : '#e74c3c');
+    setStatus(
+      saved ? `Round ${roundNumber} 备注已保存` : `Round ${roundNumber} 备注保存失败`,
+      saved ? '#2ecc71' : '#e74c3c',
+    );
   });
 
   wrapper.appendChild(input);
@@ -611,4 +622,5 @@ function renderRoundList() {
 
   setActiveRound(-1);
 }
+
 

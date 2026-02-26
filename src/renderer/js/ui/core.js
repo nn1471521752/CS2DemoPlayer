@@ -14,9 +14,6 @@ const progressBar = document.getElementById('progress-bar');
 const progressText = document.getElementById('progress-text');
 const btnPlayToggle = document.getElementById('btn-play-toggle');
 const roundList = document.getElementById('round-list');
-const killFeedElement = document.getElementById('kill-feed');
-const teamPanelT = document.getElementById('team-panel-t');
-const teamPanelCt = document.getElementById('team-panel-ct');
 const dbInfoElement = document.getElementById('db-info');
 const btnParseDb = document.getElementById('btn-parse-db');
 const demoList = document.getElementById('demo-list');
@@ -201,7 +198,11 @@ radarImg.onload = () => {
   radarImageFailed = false;
   currentRadarSize = radarImg.naturalWidth > 0 ? radarImg.naturalWidth : DEFAULT_RADAR_SIZE;
   if (!framesData.length) {
-    drawRadarBackground();
+    if (typeof renderFrameByIndex === 'function') {
+      renderFrameByIndex(0);
+    } else {
+      drawRadarBackground();
+    }
   }
 };
 
@@ -756,7 +757,11 @@ function resetCurrentDemoState() {
 
   setupProgressBar(0);
   renderRoundList();
-  drawRadarBackground();
+  if (typeof renderFrameByIndex === 'function') {
+    renderFrameByIndex(0);
+  } else {
+    drawRadarBackground();
+  }
   if (typeof resetHudState === 'function') {
     resetHudState();
   }

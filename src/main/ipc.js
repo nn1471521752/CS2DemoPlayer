@@ -31,6 +31,7 @@ const projectRoot = path.resolve(__dirname, '../..');
 const pythonScript = path.join(__dirname, '../python/engine.py');
 const DEMO_FILTERS = [{ name: 'CS2 Demos', extensions: ['dem'] }];
 const MAX_PARSE_CONCURRENCY = 6;
+const FIXED_TICKRATE = 8;
 
 let selectedDemoPath = null;
 let selectedDemoChecksum = null;
@@ -61,6 +62,107 @@ function toInteger(value, fallback = 0) {
   }
 
   return Math.floor(number);
+}
+
+function resolveTickScale(sourceTickrate) {
+  const parsedTickrate = Number(sourceTickrate);
+  const safeTickrate = Number.isFinite(parsedTickrate) && parsedTickrate > 0 ? parsedTickrate : 64;
+  return Math.max(safeTickrate / FIXED_TICKRATE, 0.0001);
+}
+
+function toFixedTick(tick, sourceTickrate) {
+  return Math.round(Number(tick || 0) / resolveTickScale(sourceTickrate));
+}
+
+function normalizeKillsForFixedTickrate(kills, sourceTickrate, fixedTick) {
+  if (!Array.isArray(kills) || kills.length === 0) {
+    return [];
+  }
+
+  return kills.map((kill) => ({
+    ...kill,
+    tick: toFixedTick(kill?.tick ?? fixedTick, sourceTickrate),
+  }));
+}
+
+function normalizeFrameForFixedTickrate(frame, sourceTickrate) {
+  const fixedTick = toFixedTick(frame?.tick, sourceTickrate);
+  const normalizedFrame = {
+    ...frame,
+    tick: fixedTick,
+    players: Array.isArray(frame?.players) ? frame.players : [],
+    kills: normalizeKillsForFixedTickrate(frame?.kills, sourceTickrate, fixedTick),
+  };
+
+  if (Object.prototype.hasOwnProperty.call(frame || {}, 'grenades')) {
+    normalizedFrame.grenades = Array.isArray(frame?.grenades) ? frame.grenades : [];
+  }
+
+  return normalizedFrame;
+}
+
+function normalizeFramesForFixedTickrate(frames, sourceTickrate) {
+  if (!Array.isArray(frames) || frames.length === 0) {
+    return [];
+  }
+
+  const frameByTick = new Map();
+  for (const frame of frames) {
+    const normalizedFrame = normalizeFrameForFixedTickrate(frame, sourceTickrate);
+    const existing = frameByTick.get(normalizedFrame.tick);
+    if (!existing) {
+      frameByTick.set(normalizedFrame.tick, normalizedFrame);
+      continue;
+    }
+
+    existing.players = normalizedFrame.players;
+    if (Object.prototype.hasOwnProperty.call(normalizedFrame, 'grenades')) {
+      existing.grenades = normalizedFrame.grenades;
+    }
+    existing.kills = [...existing.kills, ...normalizedFrame.kills];
+  }
+
+  return [...frameByTick.values()].sort((left, right) => left.tick - right.tick);
+}
+
+function normalizeRoundForFixedTickrate(round, sourceTickrate) {
+  if (!round || typeof round !== 'object') {
+    return round;
+  }
+
+  const rawStartTick = toInteger(round.raw_start_tick ?? round.start_tick);
+  const rawEndTick = toInteger(round.raw_end_tick ?? round.end_tick, rawStartTick);
+  return {
+    ...round,
+    raw_start_tick: rawStartTick,
+    raw_end_tick: rawEndTick,
+    start_tick: toFixedTick(rawStartTick, sourceTickrate),
+    end_tick: toFixedTick(rawEndTick, sourceTickrate),
+  };
+}
+
+function normalizeRoundsForFixedTickrate(rounds, sourceTickrate) {
+  if (!Array.isArray(rounds)) {
+    return [];
+  }
+  return rounds.map((round) => normalizeRoundForFixedTickrate(round, sourceTickrate));
+}
+
+function normalizeRoundResponseForFixedTickrate(payload, sourceTickrate) {
+  const normalized = { ...payload };
+  const rawStartTick = toInteger(payload?.raw_start_tick ?? payload?.start_tick);
+  const rawEndTick = toInteger(payload?.raw_end_tick ?? payload?.end_tick, rawStartTick);
+  normalized.raw_start_tick = rawStartTick;
+  normalized.raw_end_tick = rawEndTick;
+  normalized.start_tick = toFixedTick(rawStartTick, sourceTickrate);
+  normalized.end_tick = toFixedTick(rawEndTick, sourceTickrate);
+  normalized.tickrate = FIXED_TICKRATE;
+  normalized.frames = normalizeFramesForFixedTickrate(payload?.frames, sourceTickrate);
+
+  const sourceFrameStep = toInteger(payload?.frame_step, 1);
+  const normalizedStep = Math.max(1, Math.round(sourceFrameStep / resolveTickScale(sourceTickrate)));
+  normalized.frame_step = normalizedStep;
+  return normalized;
 }
 
 function resolveCacheStatus(cachedRoundsCount, roundsCount, cachedGrenadeRoundsCount = cachedRoundsCount) {
@@ -215,6 +317,8 @@ function buildAnalyzeError(message, details = {}) {
 function buildDemoPreviewResponse(demo, fileExists) {
   const cachedRoundsCount = toInteger(demo.cachedRoundsCount);
   const cachedGrenadeRoundsCount = toInteger(demo.cachedGrenadeRoundsCount);
+  const sourceTickrate = Number(demo.tickrate) || 64;
+  const rounds = normalizeRoundsForFixedTickrate(demo.rounds, sourceTickrate);
 
   return {
     status: 'success',
@@ -226,8 +330,8 @@ function buildDemoPreviewResponse(demo, fileExists) {
     parse_status: demo.parseStatus,
     map: demo.mapName,
     map_raw: demo.mapRaw,
-    tickrate: demo.tickrate,
-    rounds: demo.rounds,
+    tickrate: FIXED_TICKRATE,
+    rounds,
     cachedRoundsCount,
     cachedGrenadeRoundsCount,
     cacheStatus: resolveCacheStatus(cachedRoundsCount, demo.roundsCount, cachedGrenadeRoundsCount),
@@ -258,6 +362,8 @@ function buildPreviewErrorResponse(parserResult, existingDemo) {
 function buildPreviewSuccessResponse(parserResult, indexedDemo, existingDemo) {
   const cachedRoundsCount = toInteger(indexedDemo?.cachedRoundsCount);
   const cachedGrenadeRoundsCount = toInteger(indexedDemo?.cachedGrenadeRoundsCount);
+  const sourceTickrate = Number(indexedDemo?.tickrate || parserResult.tickrate) || 64;
+  const rounds = normalizeRoundsForFixedTickrate(indexedDemo?.rounds || parserResult.rounds || [], sourceTickrate);
 
   return {
     ...parserResult,
@@ -269,8 +375,8 @@ function buildPreviewSuccessResponse(parserResult, indexedDemo, existingDemo) {
     parse_status: indexedDemo?.parseStatus || existingDemo?.parseStatus || { code: 'P0', label: 'UNPARSED' },
     map: indexedDemo?.mapName || parserResult.map,
     map_raw: indexedDemo?.mapRaw || parserResult.map_raw,
-    tickrate: indexedDemo?.tickrate || parserResult.tickrate,
-    rounds: indexedDemo?.rounds || parserResult.rounds || [],
+    tickrate: FIXED_TICKRATE,
+    rounds,
     cachedRoundsCount,
     cachedGrenadeRoundsCount,
     cacheStatus: resolveCacheStatus(cachedRoundsCount, indexedDemo?.roundsCount || 0, cachedGrenadeRoundsCount),
@@ -544,6 +650,8 @@ async function buildParseCurrentDemoSuccess(refreshedDemo, persistedDemo, checks
   const hasCompleteCache = roundsCount > 0
     && cachedRoundsCount >= roundsCount
     && cachedGrenadeRoundsCount >= roundsCount;
+  const sourceTickrate = Number(refreshedDemo?.tickrate || persistedDemo.tickrate) || 64;
+  const rounds = normalizeRoundsForFixedTickrate(refreshedDemo?.rounds || persistedDemo.rounds, sourceTickrate);
 
   return appendDbInfo({
     status: 'success',
@@ -555,8 +663,8 @@ async function buildParseCurrentDemoSuccess(refreshedDemo, persistedDemo, checks
     parse_status: refreshedDemo?.parseStatus || { code: 'P0', label: 'UNPARSED' },
     map: refreshedDemo?.mapName || persistedDemo.mapName,
     map_raw: refreshedDemo?.mapRaw || persistedDemo.mapRaw,
-    tickrate: refreshedDemo?.tickrate || persistedDemo.tickrate,
-    rounds: refreshedDemo?.rounds || persistedDemo.rounds,
+    tickrate: FIXED_TICKRATE,
+    rounds,
     cachedRoundsCount,
     cachedGrenadeRoundsCount,
     failedRounds,
@@ -706,6 +814,8 @@ async function handleLoadDemoFromDb(_event, payload = {}) {
     const fileExists = await updateSelectionFromDbDemo(demo);
     const cachedRoundsCount = toInteger(demo.cachedRoundsCount);
     const cachedGrenadeRoundsCount = toInteger(demo.cachedGrenadeRoundsCount);
+    const sourceTickrate = Number(demo.tickrate) || 64;
+    const rounds = normalizeRoundsForFixedTickrate(demo.rounds, sourceTickrate);
 
     return appendDbInfo({
       status: 'success',
@@ -717,8 +827,8 @@ async function handleLoadDemoFromDb(_event, payload = {}) {
       parse_status: demo.parseStatus,
       map: demo.mapName,
       map_raw: demo.mapRaw,
-      tickrate: demo.tickrate,
-      rounds: demo.rounds,
+      tickrate: FIXED_TICKRATE,
+      rounds,
       cachedRoundsCount,
       cachedGrenadeRoundsCount,
       cacheStatus: resolveCacheStatus(cachedRoundsCount, demo.roundsCount, cachedGrenadeRoundsCount),
@@ -749,7 +859,7 @@ function validateRoundRange(payload = {}) {
 
 function buildCachedRoundResponse(cachedRound, cachedRoundsCount, roundNumber) {
   const hasGrenades = Boolean(cachedRound.hasGrenades) || hasGrenadesInFrameCache(cachedRound.frames);
-  return {
+  const payload = {
     status: 'success',
     source: hasGrenades ? 'database-cache' : 'database-cache-legacy',
     mode: 'round',
@@ -765,6 +875,7 @@ function buildCachedRoundResponse(cachedRound, cachedRoundsCount, roundNumber) {
     hasGrenades,
     cacheNeedsUpgrade: !hasGrenades,
   };
+  return normalizeRoundResponseForFixedTickrate(payload, cachedRound.tickrate);
 }
 
 async function tryReadCachedRound(roundNumber) {
@@ -810,12 +921,13 @@ function buildRoundUpgradeJobKey(checksum, roundNumber) {
 }
 
 function buildLiveRoundResponse(liveResult, source, cachedRoundsCount, cacheNeedsUpgrade) {
-  return {
+  const payload = {
     ...liveResult,
     source,
     cachedRoundsCount,
     cacheNeedsUpgrade,
   };
+  return normalizeRoundResponseForFixedTickrate(payload, liveResult?.tickrate);
 }
 
 function startRoundUpgradeJobIfNeeded(roundInput, checksum, demoPath) {
@@ -1005,7 +1117,7 @@ function buildFramesFromParserResponse(roundInput, parserResponse) {
 function buildRoundPositionsResponse(roundInput, tickrate, cachedRoundsCount, positions) {
   const playersByTick = buildPlayersByTickMap(positions);
   const frames = buildFramesFromPlayersByTick(roundInput, playersByTick);
-  return {
+  const payload = {
     status: 'success',
     source: 'player-positions-table',
     mode: 'round',
@@ -1022,6 +1134,7 @@ function buildRoundPositionsResponse(roundInput, tickrate, cachedRoundsCount, po
     cacheNeedsUpgrade: false,
     positionsCount: Array.isArray(positions) ? positions.length : 0,
   };
+  return normalizeRoundResponseForFixedTickrate(payload, tickrate);
 }
 
 async function handleAnalyzeDemoRoundPositions(event, payload = {}) {
@@ -1060,7 +1173,7 @@ async function handleAnalyzeDemoRoundPositions(event, payload = {}) {
     positions = await getRoundPlayerPositions(checksumSnapshot, roundInput.roundNumber);
     if (positions.length === 0) {
       const cachedRoundsCount = await getCachedRoundsCount(checksumSnapshot);
-      return {
+      const payload = {
         status: 'success',
         source: 'round-positions-parser-fallback',
         mode: 'round',
@@ -1077,6 +1190,7 @@ async function handleAnalyzeDemoRoundPositions(event, payload = {}) {
         cacheNeedsUpgrade: false,
         positionsCount: 0,
       };
+      return normalizeRoundResponseForFixedTickrate(payload, parseResult.tickrate);
     }
   }
 

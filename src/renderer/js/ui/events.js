@@ -370,7 +370,7 @@ if (btnOpen) {
 selectMap(DEFAULT_MAP_NAME);
 setupProgressBar(0);
 renderRoundList();
-drawRadarBackground();
+renderFrameByIndex(0);
 if (typeof resetHudState === 'function') {
   resetHudState();
 }
@@ -381,3 +381,4 @@ renderDbInfoPanel();
 refreshDbInfo();
 refreshDemoLibrary();
 showHomeView();
+

@@ -5,6 +5,7 @@ import math
 from demoparser2 import DemoParser
 
 DEFAULT_TICKRATE = 64.0
+FIXED_TICKRATE = 8.0
 TEAM_NUM_T = 2
 TEAM_NUM_CT = 3
 
@@ -69,6 +70,25 @@ def resolve_tickrate(header):
             return ticks_value / time_value
 
     return DEFAULT_TICKRATE
+
+
+def get_tick_scale(source_tickrate):
+    parsed_tickrate = _to_float_or_none(source_tickrate)
+    safe_source_tickrate = parsed_tickrate if parsed_tickrate and parsed_tickrate > 0 else DEFAULT_TICKRATE
+    return max(safe_source_tickrate / FIXED_TICKRATE, 0.0001)
+
+
+def raw_tick_to_fixed(raw_tick, source_tickrate):
+    return int(round(float(raw_tick) / get_tick_scale(source_tickrate)))
+
+
+def fixed_tick_to_raw(fixed_tick, source_tickrate):
+    return int(round(float(fixed_tick) * get_tick_scale(source_tickrate)))
+
+
+def fixed_step_to_raw_step(frame_step, source_tickrate):
+    safe_step = max(1, int(frame_step))
+    return max(1, int(round(float(safe_step) * get_tick_scale(source_tickrate))))
 
 
 def get_round_start_ticks(parser):
@@ -179,14 +199,19 @@ def build_round_economy_by_start_tick(parser, round_start_ticks):
     return economy_by_tick
 
 
-def build_round_record(index, start_tick, end_tick, first_round_start_tick, tickrate, economy_meta=None):
+def build_round_record(index, start_tick, end_tick, first_round_start_tick, source_tickrate, economy_meta=None):
+    fixed_start_tick = raw_tick_to_fixed(start_tick, source_tickrate)
+    fixed_end_tick = raw_tick_to_fixed(end_tick, source_tickrate)
+    fixed_first_round_start_tick = raw_tick_to_fixed(first_round_start_tick, source_tickrate)
     record = {
         "number": index + 1,
-        "start_tick": int(start_tick),
-        "end_tick": int(end_tick),
-        "start_seconds": round(max(float(start_tick - first_round_start_tick), 0.0) / tickrate, 3),
-        "end_seconds": round(max(float(end_tick - first_round_start_tick), 0.0) / tickrate, 3),
-        "duration_seconds": round(max(float(end_tick - start_tick), 0.0) / tickrate, 3),
+        "raw_start_tick": int(start_tick),
+        "raw_end_tick": int(end_tick),
+        "start_tick": int(fixed_start_tick),
+        "end_tick": int(fixed_end_tick),
+        "start_seconds": round(max(float(fixed_start_tick - fixed_first_round_start_tick), 0.0) / FIXED_TICKRATE, 3),
+        "end_seconds": round(max(float(fixed_end_tick - fixed_first_round_start_tick), 0.0) / FIXED_TICKRATE, 3),
+        "duration_seconds": round(max(float(fixed_end_tick - fixed_start_tick), 0.0) / FIXED_TICKRATE, 3),
     }
     if isinstance(economy_meta, dict):
         record["ct_economy"] = str(economy_meta.get("ct_economy") or "unknown")
@@ -197,7 +222,7 @@ def build_round_record(index, start_tick, end_tick, first_round_start_tick, tick
     return record
 
 
-def build_rounds(parser, tickrate):
+def build_rounds(parser, source_tickrate):
     round_start_ticks = get_round_start_ticks(parser)
     if not round_start_ticks:
         return []
@@ -216,7 +241,7 @@ def build_rounds(parser, tickrate):
                 start_tick,
                 end_tick,
                 first_round_start_tick,
-                tickrate,
+                source_tickrate,
                 round_economy.get(start_tick),
             )
         )
@@ -401,8 +426,9 @@ def build_round_grenades_by_tick(parser, start_tick, end_tick):
     return grenades_by_tick
 
 
-def parse_tick_dataframe(parser, start_tick, end_tick):
-    tick_range = range(start_tick, end_tick + 1)
+def parse_tick_dataframe(parser, start_tick, end_tick, tick_step=1):
+    safe_step = max(1, int(tick_step))
+    tick_range = range(start_tick, end_tick + 1, safe_step)
     tick_prop_sets = [
         [
             "X",
@@ -514,6 +540,38 @@ def build_players_by_tick(players_df):
     return players_by_tick
 
 
+def compress_players_by_tick(players_by_tick, source_tickrate):
+    fixed_players_by_tick = {}
+    for raw_tick in sorted(players_by_tick.keys()):
+        fixed_tick = raw_tick_to_fixed(raw_tick, source_tickrate)
+        fixed_players_by_tick[fixed_tick] = players_by_tick.get(raw_tick) or []
+
+    return fixed_players_by_tick
+
+
+def compress_grenades_by_tick(grenades_by_tick, source_tickrate):
+    fixed_grenades_by_tick = {}
+    for raw_tick in sorted(grenades_by_tick.keys()):
+        fixed_tick = raw_tick_to_fixed(raw_tick, source_tickrate)
+        fixed_grenades_by_tick.setdefault(fixed_tick, [])
+        fixed_grenades_by_tick[fixed_tick].extend(grenades_by_tick.get(raw_tick) or [])
+
+    return fixed_grenades_by_tick
+
+
+def compress_kills_by_tick(kills_by_tick, source_tickrate):
+    fixed_kills_by_tick = {}
+    for raw_tick in sorted(kills_by_tick.keys()):
+        fixed_tick = raw_tick_to_fixed(raw_tick, source_tickrate)
+        fixed_kills_by_tick.setdefault(fixed_tick, [])
+        for kill in kills_by_tick.get(raw_tick) or []:
+            normalized_kill = dict(kill)
+            normalized_kill["tick"] = fixed_tick
+            fixed_kills_by_tick[fixed_tick].append(normalized_kill)
+
+    return fixed_kills_by_tick
+
+
 def build_frames_sequence(
     start_tick,
     end_tick,
@@ -592,16 +650,24 @@ def build_round_kills_by_tick(parser, start_tick, end_tick):
     return kills_by_tick
 
 
-def build_round_frames(parser, start_tick, end_tick, include_grenades=True, frame_step=1):
-    tick_df = parse_tick_dataframe(parser, start_tick, end_tick)
+def build_round_frames(parser, start_tick, end_tick, source_tickrate, include_grenades=True, frame_step=1):
+    raw_start_tick = fixed_tick_to_raw(start_tick, source_tickrate)
+    raw_end_tick = fixed_tick_to_raw(end_tick, source_tickrate)
+    if raw_end_tick < raw_start_tick:
+        raw_end_tick = raw_start_tick
+
+    raw_frame_step = fixed_step_to_raw_step(frame_step, source_tickrate)
+    tick_df = parse_tick_dataframe(parser, raw_start_tick, raw_end_tick, tick_step=raw_frame_step)
     players_df = tick_df[tick_df["team_num"].isin([TEAM_NUM_T, TEAM_NUM_CT])]
-    players_by_tick = build_players_by_tick(players_df)
+    players_by_tick = compress_players_by_tick(build_players_by_tick(players_df), source_tickrate)
 
     grenades_by_tick = {}
     if include_grenades:
-        grenades_by_tick = build_round_grenades_by_tick(parser, start_tick, end_tick)
+        raw_grenades_by_tick = build_round_grenades_by_tick(parser, raw_start_tick, raw_end_tick)
+        grenades_by_tick = compress_grenades_by_tick(raw_grenades_by_tick, source_tickrate)
 
-    kills_by_tick = build_round_kills_by_tick(parser, start_tick, end_tick)
+    raw_kills_by_tick = build_round_kills_by_tick(parser, raw_start_tick, raw_end_tick)
+    kills_by_tick = compress_kills_by_tick(raw_kills_by_tick, source_tickrate)
 
     return build_frames_sequence(
         start_tick,
@@ -651,7 +717,7 @@ def build_index_result(normalized_map_name, raw_map_name, tickrate, rounds):
         "mode": "index",
         "map": normalized_map_name,
         "map_raw": raw_map_name,
-        "tickrate": tickrate,
+        "tickrate": FIXED_TICKRATE,
         "rounds": rounds,
     }
 
@@ -671,7 +737,7 @@ def build_round_result(
         "mode": "round",
         "map": normalized_map_name,
         "map_raw": raw_map_name,
-        "tickrate": tickrate,
+        "tickrate": FIXED_TICKRATE,
         "start_tick": start_tick,
         "end_tick": end_tick,
         "includes_grenades": include_grenades,
@@ -680,20 +746,27 @@ def build_round_result(
     }
 
 
-def run_index_mode(parser, normalized_map_name, raw_map_name, tickrate):
-    rounds = build_rounds(parser, tickrate)
-    print(_dumps_json_safe(build_index_result(normalized_map_name, raw_map_name, tickrate, rounds)))
+def run_index_mode(parser, normalized_map_name, raw_map_name, source_tickrate):
+    rounds = build_rounds(parser, source_tickrate)
+    print(_dumps_json_safe(build_index_result(normalized_map_name, raw_map_name, FIXED_TICKRATE, rounds)))
 
 
-def run_round_mode(parser, argv, normalized_map_name, raw_map_name, tickrate):
+def run_round_mode(parser, argv, normalized_map_name, raw_map_name, source_tickrate):
     start_tick, end_tick, include_grenades, frame_step = parse_round_args(argv)
-    frames = build_round_frames(parser, start_tick, end_tick, include_grenades=include_grenades, frame_step=frame_step)
+    frames = build_round_frames(
+        parser,
+        start_tick,
+        end_tick,
+        source_tickrate,
+        include_grenades=include_grenades,
+        frame_step=frame_step,
+    )
     print(
         _dumps_json_safe(
             build_round_result(
                 normalized_map_name,
                 raw_map_name,
-                tickrate,
+                FIXED_TICKRATE,
                 start_tick,
                 end_tick,
                 include_grenades,
@@ -717,14 +790,14 @@ def main():
         header = parser.parse_header()
         raw_map_name = header.get("map_name", "Unknown")
         normalized_map_name = normalize_map_name(raw_map_name)
-        tickrate = resolve_tickrate(header)
+        source_tickrate = resolve_tickrate(header)
 
         if mode == "index":
-            run_index_mode(parser, normalized_map_name, raw_map_name, tickrate)
+            run_index_mode(parser, normalized_map_name, raw_map_name, source_tickrate)
             return
 
         if mode == "round":
-            run_round_mode(parser, sys.argv, normalized_map_name, raw_map_name, tickrate)
+            run_round_mode(parser, sys.argv, normalized_map_name, raw_map_name, source_tickrate)
             return
 
         print(_dumps_json_safe({"status": "error", "message": f"Unsupported mode: {mode}"}))

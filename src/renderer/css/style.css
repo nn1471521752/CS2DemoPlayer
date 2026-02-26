@@ -288,7 +288,7 @@ body {
 
 .replay-layout {
   display: grid;
-  grid-template-columns: 220px minmax(560px, 1fr) 220px 300px;
+  grid-template-columns: minmax(760px, 1fr) 360px;
   gap: 12px;
   align-items: start;
 }
@@ -428,6 +428,26 @@ body {
 .kill-weapon {
   margin-left: auto;
   color: #cbd5e1;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.kill-weapon-icon {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+  filter: grayscale(100%) brightness(1.15);
+  opacity: 0.86;
+}
+
+.kill-weapon-fallback {
+  color: #cbd5e1;
+}
+
+.kill-weapon-headshot {
+  font-size: 10px;
+  color: #fca5a5;
 }
 
 .rounds-panel {
@@ -599,7 +619,7 @@ body {
 
 @media (max-width: 1500px) {
   .replay-layout {
-    grid-template-columns: 200px minmax(460px, 1fr) 200px 280px;
+    grid-template-columns: minmax(680px, 1fr) 320px;
   }
 }
 
