@@ -5,18 +5,48 @@ CS2 demo 2D playback tool built with:
 - Electron (desktop UI, file selection, IPC)
 - Python backend (`demoparser2` + `pandas`) for `.dem` parsing
 
-## Project Structure
+## Root Structure
 
 ```text
 CS2DemoPlayer/
+  data/                         # Local sqlite db and backups
   src/
-    main/        # Electron main process (window + IPC + Python process spawn)
-    renderer/    # Frontend UI (HTML/CSS/JS + assets)
-    python/      # Demo parsing engine
-  venv/          # Local Python virtual environment (create locally)
-  package.json   # Electron dependencies/scripts
+    main/                       # Electron main process
+      db/                       # DB layer split by responsibility
+        index.js                # DB facade (public db api)
+        demo.js                 # Demo query/model mapping helpers
+        debug.js                # DB debug aggregation
+        migrations.js           # DB schema migrations
+      ipc.js                    # IPC handlers + Python process lifecycle
+      main.js                   # Electron window bootstrap
+    python/                     # Python backend parser
+      constants.py
+      engine.py
+      parser.py
+    renderer/
+      assets/                   # Maps and static assets
+      css/
+        style.css
+      js/
+        map-meta.js
+        canvas.js
+        ui/                     # Frontend UI split by domain
+          core.js               # Shared state, utils, base setup
+          library.js            # Demo library / rounds / db panel UI logic
+          rendering.js          # Radar rendering and playback logic
+          events.js             # Event wiring and app entry flow
+      index.html
+  venv/                         # Local Python virtual environment (create locally)
+  package.json                  # Electron dependencies/scripts
   requirements.txt
+  README.md
 ```
+
+## Quality Limits
+
+- Rule A: each file must be `< 800` lines
+- Rule B: each function must be `< 40` lines
+- Current status: `PASS` (checked on current workspace)
 
 ## Setup
 
