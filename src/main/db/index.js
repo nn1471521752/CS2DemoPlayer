@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const readline = require('readline');
 const initSqlJs = require('sql.js');
 const { getDemoByChecksum: getDemoByChecksumInternal } = require('./demo');
 const { runMigrations } = require('./migrations');
@@ -83,6 +84,68 @@ function runTransaction(database, transactionBody) {
 
 function toBoolean(value) {
   return toNumber(value) === 1;
+}
+
+function parseCsvLine(line) {
+  const cells = [];
+  let cell = '';
+  let inQuotes = false;
+  let index = 0;
+  while (index < line.length) {
+    const char = line[index];
+    if (char === '"') {
+      const next = line[index + 1];
+      if (inQuotes && next === '"') {
+        cell += '"';
+        index += 2;
+        continue;
+      }
+      inQuotes = !inQuotes;
+      index += 1;
+      continue;
+    }
+    if (char === ',' && !inQuotes) {
+      cells.push(cell);
+      cell = '';
+      index += 1;
+      continue;
+    }
+    cell += char;
+    index += 1;
+  }
+  cells.push(cell);
+  return cells;
+}
+
+function buildCsvRow(headers, values) {
+  const row = {};
+  for (let index = 0; index < headers.length; index += 1) {
+    row[headers[index]] = values[index] ?? '';
+  }
+  return row;
+}
+
+async function readCsvRows(filePath, onRow) {
+  if (!filePath || !fs.existsSync(filePath)) {
+    return 0;
+  }
+
+  let headers = null;
+  let count = 0;
+  const stream = fs.createReadStream(filePath, { encoding: 'utf8' });
+  const interfaceInstance = readline.createInterface({ input: stream, crlfDelay: Infinity });
+  for await (const line of interfaceInstance) {
+    if (!headers) {
+      headers = parseCsvLine(line);
+      continue;
+    }
+    if (!line || !line.trim()) {
+      continue;
+    }
+    await onRow(buildCsvRow(headers, parseCsvLine(line)));
+    count += 1;
+  }
+  return count;
 }
 
 async function getSqlModule() {
@@ -803,6 +866,456 @@ const UPSERT_PLAYER_POSITION_SQL = `
     active_weapon_name = excluded.active_weapon_name
 `;
 
+const INSERT_ROUND_KILL_SQL = `
+  INSERT INTO round_kills (
+    checksum,
+    round_number,
+    tick,
+    row_index,
+    attacker_name,
+    victim_name,
+    weapon,
+    headshot,
+    assister_name,
+    attacker_team_num
+  )
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`;
+
+const INSERT_ROUND_SHOT_SQL = `
+  INSERT INTO round_shots (
+    checksum,
+    round_number,
+    tick,
+    row_index,
+    shooter_name,
+    shooter_steamid,
+    shooter_team_num,
+    weapon
+  )
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+`;
+
+const INSERT_ROUND_BLIND_SQL = `
+  INSERT INTO round_blinds (
+    checksum,
+    round_number,
+    tick,
+    row_index,
+    attacker_name,
+    attacker_steamid,
+    attacker_team_num,
+    victim_name,
+    victim_steamid,
+    victim_team_num,
+    blind_duration
+  )
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`;
+
+const INSERT_ROUND_DAMAGE_SQL = `
+  INSERT INTO round_damages (
+    checksum,
+    round_number,
+    tick,
+    row_index,
+    attacker_name,
+    attacker_steamid,
+    attacker_team_num,
+    victim_name,
+    victim_steamid,
+    victim_team_num,
+    weapon,
+    hitgroup,
+    dmg_health,
+    dmg_armor,
+    health,
+    armor
+  )
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`;
+
+const INSERT_ROUND_GRENADE_SQL = `
+  INSERT INTO round_grenades (
+    checksum,
+    round_number,
+    tick,
+    row_index,
+    entity_id,
+    grenade_type,
+    x,
+    y,
+    z,
+    thrower_name,
+    thrower_steamid,
+    thrower_team_num
+  )
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`;
+
+const INSERT_ROUND_GRENADE_EVENT_SQL = `
+  INSERT INTO round_grenade_events (
+    checksum,
+    round_number,
+    tick,
+    row_index,
+    event_type,
+    grenade_type,
+    entity_id,
+    x,
+    y,
+    z,
+    thrower_name,
+    thrower_steamid,
+    thrower_team_num
+  )
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`;
+
+const INSERT_ROUND_BOMB_EVENT_SQL = `
+  INSERT INTO round_bomb_events (
+    checksum,
+    round_number,
+    tick,
+    row_index,
+    event_type,
+    site,
+    user_name,
+    user_steamid,
+    team_num
+  )
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+`;
+
+function clearRoundDerivedTables(database, checksum) {
+  const statements = [
+    'DELETE FROM round_frames WHERE checksum = ?',
+    'DELETE FROM player_positions WHERE checksum = ?',
+    'DELETE FROM round_kills WHERE checksum = ?',
+    'DELETE FROM round_shots WHERE checksum = ?',
+    'DELETE FROM round_blinds WHERE checksum = ?',
+    'DELETE FROM round_damages WHERE checksum = ?',
+    'DELETE FROM round_grenades WHERE checksum = ?',
+    'DELETE FROM round_grenade_events WHERE checksum = ?',
+    'DELETE FROM round_bomb_events WHERE checksum = ?',
+  ];
+
+  for (const statement of statements) {
+    database.run(statement, [checksum]);
+  }
+}
+
+function nextRowIndex(counterMap, roundNumber, tick) {
+  const key = `${roundNumber}:${tick}`;
+  const current = counterMap.get(key) || 0;
+  const next = current + 1;
+  counterMap.set(key, next);
+  return next;
+}
+
+async function importRoundMetaCsv(database, checksum, csvFiles, now) {
+  const insertStatement = database.prepare(UPSERT_ROUND_FRAME_SQL);
+  let count = 0;
+  try {
+    count = await readCsvRows(csvFiles.round_meta, async (row) => {
+      insertStatement.run([
+        checksum,
+        toSafeInteger(row.round_number, 0),
+        toSafeInteger(row.start_tick, 0),
+        toSafeInteger(row.end_tick, 0),
+        toFiniteFloat(row.tickrate, 64),
+        toSafeInteger(row.has_grenades, 0) > 0 ? 1 : 0,
+        '[]',
+        Math.max(0, toSafeInteger(row.frames_count, 0)),
+        now,
+      ]);
+    });
+  } finally {
+    insertStatement.free();
+  }
+  return count;
+}
+
+async function importPlayerPositionsCsv(database, checksum, csvFiles) {
+  const insertStatement = database.prepare(UPSERT_PLAYER_POSITION_SQL);
+  let count = 0;
+  try {
+    count = await readCsvRows(csvFiles.player_positions, async (row) => {
+      insertStatement.run([
+        checksum,
+        toSafeInteger(row.round_number, 0),
+        toSafeInteger(row.tick, 0),
+        String(row.player_key || ''),
+        toSafeInteger(row.user_id, 0),
+        String(row.player_name || ''),
+        toSafeInteger(row.team_num, 0),
+        toFiniteFloat(row.x, 0),
+        toFiniteFloat(row.y, 0),
+        toFiniteFloat(row.yaw, 0),
+        toSafeInteger(row.is_alive, 0) > 0 ? 1 : 0,
+        Math.max(0, toSafeInteger(row.health, 0)),
+        Math.max(0, toSafeInteger(row.balance, 0)),
+        String(row.active_weapon_name || ''),
+      ]);
+    });
+  } finally {
+    insertStatement.free();
+  }
+  return count;
+}
+
+async function importRoundKillsCsv(database, checksum, csvFiles) {
+  const insertStatement = database.prepare(INSERT_ROUND_KILL_SQL);
+  const rowCounters = new Map();
+  let count = 0;
+  try {
+    count = await readCsvRows(csvFiles.kills, async (row) => {
+      const roundNumber = toSafeInteger(row.round_number, 0);
+      const tick = toSafeInteger(row.tick, 0);
+      insertStatement.run([
+        checksum,
+        roundNumber,
+        tick,
+        nextRowIndex(rowCounters, roundNumber, tick),
+        String(row.attacker_name || ''),
+        String(row.victim_name || ''),
+        String(row.weapon || ''),
+        toSafeInteger(row.headshot, 0) > 0 ? 1 : 0,
+        String(row.assister_name || ''),
+        toSafeInteger(row.attacker_team_num, 0),
+      ]);
+    });
+  } finally {
+    insertStatement.free();
+  }
+  return count;
+}
+
+async function importRoundShotsCsv(database, checksum, csvFiles) {
+  const insertStatement = database.prepare(INSERT_ROUND_SHOT_SQL);
+  const rowCounters = new Map();
+  let count = 0;
+  try {
+    count = await readCsvRows(csvFiles.shots, async (row) => {
+      const roundNumber = toSafeInteger(row.round_number, 0);
+      const tick = toSafeInteger(row.tick, 0);
+      insertStatement.run([
+        checksum,
+        roundNumber,
+        tick,
+        nextRowIndex(rowCounters, roundNumber, tick),
+        String(row.shooter_name || ''),
+        String(row.shooter_steamid || ''),
+        toSafeInteger(row.shooter_team_num, 0),
+        String(row.weapon || ''),
+      ]);
+    });
+  } finally {
+    insertStatement.free();
+  }
+  return count;
+}
+
+async function importRoundBlindsCsv(database, checksum, csvFiles) {
+  const insertStatement = database.prepare(INSERT_ROUND_BLIND_SQL);
+  const rowCounters = new Map();
+  let count = 0;
+  try {
+    count = await readCsvRows(csvFiles.blinds, async (row) => {
+      const roundNumber = toSafeInteger(row.round_number, 0);
+      const tick = toSafeInteger(row.tick, 0);
+      insertStatement.run([
+        checksum,
+        roundNumber,
+        tick,
+        nextRowIndex(rowCounters, roundNumber, tick),
+        String(row.attacker_name || ''),
+        String(row.attacker_steamid || ''),
+        toSafeInteger(row.attacker_team_num, 0),
+        String(row.victim_name || ''),
+        String(row.victim_steamid || ''),
+        toSafeInteger(row.victim_team_num, 0),
+        Math.max(0, toFiniteFloat(row.blind_duration, 0)),
+      ]);
+    });
+  } finally {
+    insertStatement.free();
+  }
+  return count;
+}
+
+async function importRoundDamagesCsv(database, checksum, csvFiles) {
+  const insertStatement = database.prepare(INSERT_ROUND_DAMAGE_SQL);
+  const rowCounters = new Map();
+  let count = 0;
+  try {
+    count = await readCsvRows(csvFiles.damages, async (row) => {
+      const roundNumber = toSafeInteger(row.round_number, 0);
+      const tick = toSafeInteger(row.tick, 0);
+      insertStatement.run([
+        checksum,
+        roundNumber,
+        tick,
+        nextRowIndex(rowCounters, roundNumber, tick),
+        String(row.attacker_name || ''),
+        String(row.attacker_steamid || ''),
+        toSafeInteger(row.attacker_team_num, 0),
+        String(row.victim_name || ''),
+        String(row.victim_steamid || ''),
+        toSafeInteger(row.victim_team_num, 0),
+        String(row.weapon || ''),
+        String(row.hitgroup || ''),
+        Math.max(0, toSafeInteger(row.dmg_health, 0)),
+        Math.max(0, toSafeInteger(row.dmg_armor, 0)),
+        Math.max(0, toSafeInteger(row.health, 0)),
+        Math.max(0, toSafeInteger(row.armor, 0)),
+      ]);
+    });
+  } finally {
+    insertStatement.free();
+  }
+  return count;
+}
+
+async function importRoundGrenadesCsv(database, checksum, csvFiles) {
+  const insertStatement = database.prepare(INSERT_ROUND_GRENADE_SQL);
+  const rowCounters = new Map();
+  let count = 0;
+  try {
+    count = await readCsvRows(csvFiles.grenades, async (row) => {
+      const roundNumber = toSafeInteger(row.round_number, 0);
+      const tick = toSafeInteger(row.tick, 0);
+      insertStatement.run([
+        checksum,
+        roundNumber,
+        tick,
+        nextRowIndex(rowCounters, roundNumber, tick),
+        toSafeInteger(row.entity_id, 0),
+        String(row.grenade_type || ''),
+        toFiniteFloat(row.x, 0),
+        toFiniteFloat(row.y, 0),
+        toFiniteFloat(row.z, 0),
+        String(row.thrower_name || ''),
+        String(row.thrower_steamid || ''),
+        toSafeInteger(row.thrower_team_num, 0),
+      ]);
+    });
+  } finally {
+    insertStatement.free();
+  }
+  return count;
+}
+
+async function importRoundGrenadeEventsCsv(database, checksum, csvFiles) {
+  const insertStatement = database.prepare(INSERT_ROUND_GRENADE_EVENT_SQL);
+  const rowCounters = new Map();
+  let count = 0;
+  try {
+    count = await readCsvRows(csvFiles.grenade_events, async (row) => {
+      const roundNumber = toSafeInteger(row.round_number, 0);
+      const tick = toSafeInteger(row.tick, 0);
+      insertStatement.run([
+        checksum,
+        roundNumber,
+        tick,
+        nextRowIndex(rowCounters, roundNumber, tick),
+        String(row.event_type || ''),
+        String(row.grenade_type || ''),
+        toSafeInteger(row.entity_id, 0),
+        toFiniteFloat(row.x, 0),
+        toFiniteFloat(row.y, 0),
+        toFiniteFloat(row.z, 0),
+        String(row.thrower_name || ''),
+        String(row.thrower_steamid || ''),
+        toSafeInteger(row.thrower_team_num, 0),
+      ]);
+    });
+  } finally {
+    insertStatement.free();
+  }
+  return count;
+}
+
+async function importRoundBombEventsCsv(database, checksum, csvFiles) {
+  const insertStatement = database.prepare(INSERT_ROUND_BOMB_EVENT_SQL);
+  const rowCounters = new Map();
+  let count = 0;
+  try {
+    count = await readCsvRows(csvFiles.bomb_events, async (row) => {
+      const roundNumber = toSafeInteger(row.round_number, 0);
+      const tick = toSafeInteger(row.tick, 0);
+      insertStatement.run([
+        checksum,
+        roundNumber,
+        tick,
+        nextRowIndex(rowCounters, roundNumber, tick),
+        String(row.event_type || ''),
+        toSafeInteger(row.site, 0),
+        String(row.user_name || ''),
+        String(row.user_steamid || ''),
+        toSafeInteger(row.team_num, 0),
+      ]);
+    });
+  } finally {
+    insertStatement.free();
+  }
+  return count;
+}
+
+function normalizeCsvFilePaths(csvFiles = {}) {
+  return {
+    round_meta: String(csvFiles.round_meta || ''),
+    player_positions: String(csvFiles.player_positions || ''),
+    kills: String(csvFiles.kills || ''),
+    shots: String(csvFiles.shots || ''),
+    blinds: String(csvFiles.blinds || ''),
+    damages: String(csvFiles.damages || ''),
+    grenades: String(csvFiles.grenades || ''),
+    grenade_events: String(csvFiles.grenade_events || ''),
+    bomb_events: String(csvFiles.bomb_events || ''),
+  };
+}
+
+async function saveRoundDataFromCsv(checksum, csvFiles, options = {}) {
+  const normalizedChecksum = String(checksum || '').trim();
+  if (!normalizedChecksum) {
+    throw new Error('Missing checksum for CSV import.');
+  }
+
+  const files = normalizeCsvFilePaths(csvFiles);
+  const database = await getDatabase();
+  const replaceChecksum = options.replaceChecksum !== false;
+  const now = new Date().toISOString();
+  const counts = {};
+
+  database.run('BEGIN TRANSACTION');
+  try {
+    if (replaceChecksum) {
+      clearRoundDerivedTables(database, normalizedChecksum);
+    }
+    counts.roundMeta = await importRoundMetaCsv(database, normalizedChecksum, files, now);
+    counts.playerPositions = await importPlayerPositionsCsv(database, normalizedChecksum, files);
+    counts.kills = await importRoundKillsCsv(database, normalizedChecksum, files);
+    counts.shots = await importRoundShotsCsv(database, normalizedChecksum, files);
+    counts.blinds = await importRoundBlindsCsv(database, normalizedChecksum, files);
+    counts.damages = await importRoundDamagesCsv(database, normalizedChecksum, files);
+    counts.grenades = await importRoundGrenadesCsv(database, normalizedChecksum, files);
+    counts.grenadeEvents = await importRoundGrenadeEventsCsv(database, normalizedChecksum, files);
+    counts.bombEvents = await importRoundBombEventsCsv(database, normalizedChecksum, files);
+    database.run('COMMIT');
+  } catch (error) {
+    try {
+      database.run('ROLLBACK');
+    } catch (_rollbackError) {
+      // noop
+    }
+    throw error;
+  }
+
+  await persistDatabase(database);
+  return counts;
+}
+
 function writeRoundFrames(database, checksum, normalizedRoundFrames, now) {
   const insertStatement = database.prepare(UPSERT_ROUND_FRAME_SQL);
   try {
@@ -837,6 +1350,35 @@ function deleteRoundPlayerPositions(database, checksum, roundNumbers) {
     }
   } finally {
     deleteStatement.free();
+  }
+}
+
+function deleteRoundEventTablesByRound(database, checksum, roundNumbers) {
+  const uniqueRoundNumbers = [...new Set(roundNumbers.map((roundNumber) => toSafeInteger(roundNumber, 0)).filter((roundNumber) => roundNumber > 0))];
+  if (uniqueRoundNumbers.length === 0) {
+    return;
+  }
+
+  const statements = [
+    database.prepare('DELETE FROM round_kills WHERE checksum = ? AND round_number = ?'),
+    database.prepare('DELETE FROM round_shots WHERE checksum = ? AND round_number = ?'),
+    database.prepare('DELETE FROM round_blinds WHERE checksum = ? AND round_number = ?'),
+    database.prepare('DELETE FROM round_damages WHERE checksum = ? AND round_number = ?'),
+    database.prepare('DELETE FROM round_grenades WHERE checksum = ? AND round_number = ?'),
+    database.prepare('DELETE FROM round_grenade_events WHERE checksum = ? AND round_number = ?'),
+    database.prepare('DELETE FROM round_bomb_events WHERE checksum = ? AND round_number = ?'),
+  ];
+
+  try {
+    for (const roundNumber of uniqueRoundNumbers) {
+      for (const statement of statements) {
+        statement.run([checksum, roundNumber]);
+      }
+    }
+  } finally {
+    for (const statement of statements) {
+      statement.free();
+    }
   }
 }
 
@@ -879,11 +1421,11 @@ async function saveRoundFramesBatch(checksum, roundFrames, options = {}) {
 
   runTransaction(database, () => {
     if (replaceChecksum) {
-      database.run('DELETE FROM round_frames WHERE checksum = ?', [checksum]);
-      database.run('DELETE FROM player_positions WHERE checksum = ?', [checksum]);
+      clearRoundDerivedTables(database, checksum);
     } else {
       const roundNumbers = normalizedRoundFrames.map((roundFrame) => roundFrame.roundNumber);
       deleteRoundPlayerPositions(database, checksum, roundNumbers);
+      deleteRoundEventTablesByRound(database, checksum, roundNumbers);
     }
 
     writeRoundFrames(database, checksum, normalizedRoundFrames, now);
@@ -896,6 +1438,241 @@ async function saveRoundFramesBatch(checksum, roundFrames, options = {}) {
 
 async function saveRoundFrames(checksum, roundFrame) {
   await saveRoundFramesBatch(checksum, [roundFrame], { replaceChecksum: false });
+}
+
+function createEmptyFrameEntry(tick, includeGrenades) {
+  const frame = {
+    tick,
+    players: [],
+    bomb_events: [],
+    kills: [],
+    shots: [],
+    blinds: [],
+    damages: [],
+  };
+  if (includeGrenades) {
+    frame.grenades = [];
+    frame.grenade_events = [];
+  }
+  return frame;
+}
+
+function ensureFrameEntry(frameByTick, tick, startTick, endTick, includeGrenades) {
+  const safeTick = toSafeInteger(tick, -1);
+  if (safeTick < 0) {
+    return null;
+  }
+
+  if (!frameByTick.has(safeTick)) {
+    if (safeTick < startTick || safeTick > endTick) {
+      return null;
+    }
+    frameByTick.set(safeTick, createEmptyFrameEntry(safeTick, includeGrenades));
+  }
+
+  return frameByTick.get(safeTick);
+}
+
+function buildFrameMapByRange(startTick, endTick, includeGrenades) {
+  const frameByTick = new Map();
+  const safeStart = Math.max(0, toSafeInteger(startTick, 0));
+  const safeEnd = Math.max(safeStart, toSafeInteger(endTick, safeStart));
+  for (let tick = safeStart; tick <= safeEnd; tick += 1) {
+    frameByTick.set(tick, createEmptyFrameEntry(tick, includeGrenades));
+  }
+  return frameByTick;
+}
+
+function mapPlayerPositionToFramePlayer(row) {
+  return {
+    X: toFiniteFloat(row.x, 0),
+    Y: toFiniteFloat(row.y, 0),
+    team_num: toSafeInteger(row.team_num, 0),
+    yaw: toFiniteFloat(row.yaw, 0),
+    is_alive: toSafeInteger(row.is_alive, 0) > 0,
+    health: Math.max(0, toSafeInteger(row.health, 0)),
+    balance: Math.max(0, toSafeInteger(row.balance, 0)),
+    user_id: toSafeInteger(row.user_id, 0),
+    name: String(row.player_name || ''),
+    active_weapon_name: String(row.active_weapon_name || ''),
+    weapon_name: String(row.active_weapon_name || ''),
+  };
+}
+
+function collectReconstructedFrames(frameByTick) {
+  return [...frameByTick.values()].sort((left, right) => left.tick - right.tick);
+}
+
+async function reconstructRoundFramesFromTables(database, checksum, roundNumber, startTick, endTick, includeGrenades) {
+  const frameByTick = buildFrameMapByRange(startTick, endTick, includeGrenades);
+  const baseParams = [checksum, toNumber(roundNumber)];
+  const players = getAll(
+    database,
+    `SELECT tick, user_id, player_name, team_num, x, y, yaw, is_alive, health, balance, active_weapon_name
+     FROM player_positions WHERE checksum = ? AND round_number = ? ORDER BY tick ASC, player_key ASC`,
+    baseParams,
+  );
+  for (const row of players) {
+    const frame = ensureFrameEntry(frameByTick, row.tick, startTick, endTick, includeGrenades);
+    if (!frame) continue;
+    frame.players.push(mapPlayerPositionToFramePlayer(row));
+  }
+
+  const kills = getAll(
+    database,
+    `SELECT tick, attacker_name, victim_name, weapon, headshot, assister_name, attacker_team_num
+     FROM round_kills WHERE checksum = ? AND round_number = ? ORDER BY tick ASC, row_index ASC`,
+    baseParams,
+  );
+  for (const row of kills) {
+    const frame = ensureFrameEntry(frameByTick, row.tick, startTick, endTick, includeGrenades);
+    if (!frame) continue;
+    frame.kills.push({
+      tick: toSafeInteger(row.tick, 0),
+      attacker_name: String(row.attacker_name || ''),
+      victim_name: String(row.victim_name || ''),
+      weapon: String(row.weapon || ''),
+      headshot: toSafeInteger(row.headshot, 0) > 0,
+      assister_name: String(row.assister_name || ''),
+      attacker_team_num: toSafeInteger(row.attacker_team_num, 0),
+    });
+  }
+
+  const shots = getAll(
+    database,
+    `SELECT tick, shooter_name, shooter_steamid, shooter_team_num, weapon
+     FROM round_shots WHERE checksum = ? AND round_number = ? ORDER BY tick ASC, row_index ASC`,
+    baseParams,
+  );
+  for (const row of shots) {
+    const frame = ensureFrameEntry(frameByTick, row.tick, startTick, endTick, includeGrenades);
+    if (!frame) continue;
+    frame.shots.push({
+      tick: toSafeInteger(row.tick, 0),
+      shooter_name: String(row.shooter_name || ''),
+      shooter_steamid: String(row.shooter_steamid || ''),
+      shooter_team_num: toSafeInteger(row.shooter_team_num, 0),
+      weapon: String(row.weapon || ''),
+    });
+  }
+
+  const blinds = getAll(
+    database,
+    `SELECT tick, attacker_name, attacker_steamid, attacker_team_num, victim_name, victim_steamid, victim_team_num, blind_duration
+     FROM round_blinds WHERE checksum = ? AND round_number = ? ORDER BY tick ASC, row_index ASC`,
+    baseParams,
+  );
+  for (const row of blinds) {
+    const frame = ensureFrameEntry(frameByTick, row.tick, startTick, endTick, includeGrenades);
+    if (!frame) continue;
+    frame.blinds.push({
+      tick: toSafeInteger(row.tick, 0),
+      attacker_name: String(row.attacker_name || ''),
+      attacker_steamid: String(row.attacker_steamid || ''),
+      attacker_team_num: toSafeInteger(row.attacker_team_num, 0),
+      victim_name: String(row.victim_name || ''),
+      victim_steamid: String(row.victim_steamid || ''),
+      victim_team_num: toSafeInteger(row.victim_team_num, 0),
+      blind_duration: Math.max(0, toFiniteFloat(row.blind_duration, 0)),
+    });
+  }
+
+  const damages = getAll(
+    database,
+    `SELECT tick, attacker_name, attacker_steamid, attacker_team_num, victim_name, victim_steamid, victim_team_num, weapon, hitgroup, dmg_health, dmg_armor, health, armor
+     FROM round_damages WHERE checksum = ? AND round_number = ? ORDER BY tick ASC, row_index ASC`,
+    baseParams,
+  );
+  for (const row of damages) {
+    const frame = ensureFrameEntry(frameByTick, row.tick, startTick, endTick, includeGrenades);
+    if (!frame) continue;
+    frame.damages.push({
+      tick: toSafeInteger(row.tick, 0),
+      attacker_name: String(row.attacker_name || ''),
+      attacker_steamid: String(row.attacker_steamid || ''),
+      attacker_team_num: toSafeInteger(row.attacker_team_num, 0),
+      victim_name: String(row.victim_name || ''),
+      victim_steamid: String(row.victim_steamid || ''),
+      victim_team_num: toSafeInteger(row.victim_team_num, 0),
+      weapon: String(row.weapon || ''),
+      hitgroup: String(row.hitgroup || ''),
+      dmg_health: Math.max(0, toSafeInteger(row.dmg_health, 0)),
+      dmg_armor: Math.max(0, toSafeInteger(row.dmg_armor, 0)),
+      health: Math.max(0, toSafeInteger(row.health, 0)),
+      armor: Math.max(0, toSafeInteger(row.armor, 0)),
+    });
+  }
+
+  const grenades = getAll(
+    database,
+    `SELECT tick, entity_id, grenade_type, x, y, z, thrower_name, thrower_steamid, thrower_team_num
+     FROM round_grenades WHERE checksum = ? AND round_number = ? ORDER BY tick ASC, row_index ASC`,
+    baseParams,
+  );
+  for (const row of grenades) {
+    const frame = ensureFrameEntry(frameByTick, row.tick, startTick, endTick, includeGrenades);
+    if (!frame) continue;
+    if (!Array.isArray(frame.grenades)) {
+      frame.grenades = [];
+    }
+    frame.grenades.push({
+      entity_id: toSafeInteger(row.entity_id, 0),
+      grenade_type: String(row.grenade_type || ''),
+      x: toFiniteFloat(row.x, 0),
+      y: toFiniteFloat(row.y, 0),
+      z: toFiniteFloat(row.z, 0),
+      thrower_name: String(row.thrower_name || ''),
+      thrower_steamid: String(row.thrower_steamid || ''),
+      thrower_team_num: toSafeInteger(row.thrower_team_num, 0),
+    });
+  }
+
+  const grenadeEvents = getAll(
+    database,
+    `SELECT tick, event_type, grenade_type, entity_id, x, y, z, thrower_name, thrower_steamid, thrower_team_num
+     FROM round_grenade_events WHERE checksum = ? AND round_number = ? ORDER BY tick ASC, row_index ASC`,
+    baseParams,
+  );
+  for (const row of grenadeEvents) {
+    const frame = ensureFrameEntry(frameByTick, row.tick, startTick, endTick, includeGrenades);
+    if (!frame) continue;
+    if (!Array.isArray(frame.grenade_events)) {
+      frame.grenade_events = [];
+    }
+    frame.grenade_events.push({
+      tick: toSafeInteger(row.tick, 0),
+      event_type: String(row.event_type || ''),
+      grenade_type: String(row.grenade_type || ''),
+      entity_id: toSafeInteger(row.entity_id, 0),
+      x: toFiniteFloat(row.x, 0),
+      y: toFiniteFloat(row.y, 0),
+      z: toFiniteFloat(row.z, 0),
+      thrower_name: String(row.thrower_name || ''),
+      thrower_steamid: String(row.thrower_steamid || ''),
+      thrower_team_num: toSafeInteger(row.thrower_team_num, 0),
+    });
+  }
+
+  const bombEvents = getAll(
+    database,
+    `SELECT tick, event_type, site, user_name, user_steamid, team_num
+     FROM round_bomb_events WHERE checksum = ? AND round_number = ? ORDER BY tick ASC, row_index ASC`,
+    baseParams,
+  );
+  for (const row of bombEvents) {
+    const frame = ensureFrameEntry(frameByTick, row.tick, startTick, endTick, includeGrenades);
+    if (!frame) continue;
+    frame.bomb_events.push({
+      tick: toSafeInteger(row.tick, 0),
+      event_type: String(row.event_type || ''),
+      site: toSafeInteger(row.site, 0),
+      user_name: String(row.user_name || ''),
+      user_steamid: String(row.user_steamid || ''),
+      team_num: toSafeInteger(row.team_num, 0),
+    });
+  }
+
+  return collectReconstructedFrames(frameByTick);
 }
 
 async function getRoundFrames(checksum, roundNumber) {
@@ -923,8 +1700,23 @@ async function getRoundFrames(checksum, roundNumber) {
   if (!row) {
     return null;
   }
+  const mapped = mapRoundFrameRow(row);
+  if (Array.isArray(mapped.frames) && mapped.frames.length > 0) {
+    return mapped;
+  }
 
-  return mapRoundFrameRow(row);
+  mapped.frames = await reconstructRoundFramesFromTables(
+    database,
+    checksum,
+    roundNumber,
+    mapped.startTick,
+    mapped.endTick,
+    mapped.hasGrenades,
+  );
+  if (mapped.framesCount <= 0) {
+    mapped.framesCount = mapped.frames.length;
+  }
+  return mapped;
 }
 
 async function getRoundPlayerPositions(checksum, roundNumber) {
@@ -983,6 +1775,7 @@ module.exports = {
   saveDemoIndex,
   saveRoundFrames,
   saveRoundFramesBatch,
+  saveRoundDataFromCsv,
   getRoundFrames,
   getRoundPlayerPositions,
   getCachedRoundsCount,

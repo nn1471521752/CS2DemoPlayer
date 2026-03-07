@@ -1,13 +1,16 @@
-const HUD_OUTER_PADDING = 8;
-const HUD_COLUMN_GAP = 8;
-const HUD_PANEL_MIN_WIDTH = 96;
+const HUD_OUTER_PADDING = 2;       // 压缩外侧边距到最小 (2px)
+const HUD_COLUMN_GAP = 4;          // 压缩侧边栏与地图的内侧间距 (4px)
+const HUD_PANEL_MIN_WIDTH = 90
 const HUD_PANEL_MAX_WIDTH = 180;
 const HUD_MIN_MAP_SIZE = 360;
-const HUD_PLAYER_SLOT_GAP = 10;
+const HUD_PLAYER_SLOT_GAP = 4;     // 缩小槽位之间的上下间距 (4px)
 const HUD_PLAYER_SLOT_MIN_HEIGHT = 52;
 const HUD_PLAYER_SLOT_MAX_HEIGHT = 70;
 const HUD_PLAYER_SLOTS = 5;
 const DISPLAY_TICKRATE = 32;
+const REPLAY_CANVAS_MIN_HEIGHT = 420;
+const REPLAY_CANVAS_SAFE_GUTTER = 12;
+const HUD_PANEL_WIDTH_BY_HEIGHT_RATIO = 0.14;
 
 let currentMapViewport = {
   x: 0,
@@ -18,6 +21,7 @@ let currentMapViewport = {
   scaleY: canvas.height / DEFAULT_RADAR_SIZE,
 };
 let currentPlaybackTick = 0;
+let currentPlaybackTickRaw = 0;
 
 function lerpNumber(startValue, endValue, alpha) {
   return startValue + ((endValue - startValue) * alpha);
@@ -75,29 +79,88 @@ function updateMapViewport(viewport) {
   return currentMapViewport;
 }
 
+function parsePxValue(value) {
+  const numeric = Number.parseFloat(value);
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function getElementOuterHeightPx(element) {
+  if (!element) {
+    return 0;
+  }
+
+  const styles = window.getComputedStyle(element);
+  return element.offsetHeight + parsePxValue(styles.marginTop) + parsePxValue(styles.marginBottom);
+}
+
+function getReplayCanvasTargetHeight() {
+  const viewportHeight = Math.max(window.innerHeight || 0, REPLAY_CANVAS_MIN_HEIGHT);
+  const bodyStyles = window.getComputedStyle(document.body);
+  const bodyPadding = parsePxValue(bodyStyles.paddingTop) + parsePxValue(bodyStyles.paddingBottom);
+  const toolbarHeight = getElementOuterHeightPx(document.querySelector('.app-toolbar'));
+  const headerHeight = getElementOuterHeightPx(document.querySelector('#replay-view .replay-header'));
+  const controlsHeight = getElementOuterHeightPx(document.querySelector('#replay-view .replay-controls'));
+  const availableHeight = viewportHeight
+    - bodyPadding
+    - toolbarHeight
+    - headerHeight
+    - controlsHeight
+    - REPLAY_CANVAS_SAFE_GUTTER;
+
+  return Math.max(REPLAY_CANVAS_MIN_HEIGHT, Math.floor(availableHeight));
+}
+
+function getHudPanelWidthByHeight(innerHeight) {
+  const desiredWidth = innerHeight * HUD_PANEL_WIDTH_BY_HEIGHT_RATIO;
+  return clamp(desiredWidth, 40, HUD_PANEL_MAX_WIDTH);
+}
+
+function syncReplayCanvasSize(force = false) {
+  if (replayView && replayView.classList.contains('is-hidden')) {
+    return false;
+  }
+
+  const targetHeight = getReplayCanvasTargetHeight();
+  const innerHeight = Math.max(targetHeight - (HUD_OUTER_PADDING * 2), 1);
+  const mapSize = innerHeight;
+  const panelWidth = getHudPanelWidthByHeight(innerHeight);
+  const targetWidth = Math.max(
+    1,
+    Math.round((HUD_OUTER_PADDING * 2) + mapSize + (panelWidth * 2) + (HUD_COLUMN_GAP * 2)),
+  );
+
+  if (!force && canvas.width === targetWidth && canvas.height === targetHeight) {
+    return false;
+  }
+
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
+  return true;
+}
+
 function buildCanvasHudLayout() {
   const outer = HUD_OUTER_PADDING;
   const innerWidth = Math.max(canvas.width - (outer * 2), 1);
   const innerHeight = Math.max(canvas.height - (outer * 2), 1);
-  const maxPanelWidthByCanvas = (innerWidth - (HUD_COLUMN_GAP * 2) - HUD_MIN_MAP_SIZE) / 2;
-  const desiredPanelWidth = clamp(innerWidth * 0.11, HUD_PANEL_MIN_WIDTH, HUD_PANEL_MAX_WIDTH);
-  const panelWidth = clamp(desiredPanelWidth, 40, Math.max(40, maxPanelWidthByCanvas));
-  const availableMapSize = Math.max(1, innerWidth - (panelWidth * 2) - (HUD_COLUMN_GAP * 2));
-  const mapSize = Math.max(Math.min(HUD_MIN_MAP_SIZE, availableMapSize), Math.min(innerHeight, availableMapSize));
-  const contentWidth = (panelWidth * 2) + (HUD_COLUMN_GAP * 2) + mapSize;
-  const contentStartX = outer + ((innerWidth - contentWidth) / 2);
-  const mapX = contentStartX + panelWidth + HUD_COLUMN_GAP;
-  const mapY = outer + ((innerHeight - mapSize) / 2);
+  const mapSize = innerHeight;
+  const desiredPanelWidth = getHudPanelWidthByHeight(innerHeight);
+  const maxPanelWidthByCanvas = Math.max(40, (innerWidth - mapSize - (HUD_COLUMN_GAP * 2)) / 2);
+  const panelWidth = clamp(desiredPanelWidth, 40, maxPanelWidthByCanvas);
+  const leftPanelX = outer;
+  const mapX = leftPanelX + panelWidth + HUD_COLUMN_GAP;
+  const mapY = outer;
   const rightPanelX = mapX + mapSize + HUD_COLUMN_GAP;
+  const contentRight = rightPanelX + panelWidth;
+  const killAreaWidth = Math.min(200, Math.max(100, panelWidth + 36));
 
   return {
-    leftPanel: { x: contentStartX, y: outer, width: panelWidth, height: innerHeight },
+    leftPanel: { x: leftPanelX, y: outer, width: panelWidth, height: innerHeight },
     map: { x: mapX, y: mapY, width: mapSize, height: mapSize },
     rightPanel: { x: rightPanelX, y: outer, width: panelWidth, height: innerHeight },
     killArea: {
-      x: canvas.width - outer - Math.min(420, canvas.width * 0.34),
+      x: Math.max(outer, contentRight - killAreaWidth),
       y: outer + 4,
-      width: Math.min(420, canvas.width * 0.34),
+      width: killAreaWidth,
     },
   };
 }
@@ -163,338 +226,316 @@ function worldRadiusToCanvasRadius(worldRadius, scaleX, scaleY) {
   return radarRadius * ((scaleX + scaleY) / 2);
 }
 
-function drawGrenadeEffectCircle(grenadeType, worldPoint, elapsedSeconds, scaleX, scaleY, unitScale) {
-  const typeKey = normalizeGrenadeType(grenadeType);
-  const effectConfig = GRENADE_EFFECT_CONFIG_BY_TYPE[typeKey];
-  if (!effectConfig || !worldPoint) {
-    return;
-  }
-
-  const durationSeconds = Number(effectConfig.durationSeconds) || 0;
-  if (durationSeconds <= 0 || elapsedSeconds < 0 || elapsedSeconds > durationSeconds) {
-    return;
-  }
-
-  const progress = clamp(elapsedSeconds / durationSeconds, 0, 1);
-  const fadeOutSeconds = clamp(Number(effectConfig.fadeOutSeconds) || durationSeconds, 0.05, durationSeconds);
-  const fadeStartSeconds = Math.max(0, durationSeconds - fadeOutSeconds);
-  let fadeFactor = 1;
-  if (elapsedSeconds > fadeStartSeconds) {
-    const tailProgress = (elapsedSeconds - fadeStartSeconds) / fadeOutSeconds;
-    fadeFactor = 1 - clamp(tailProgress, 0, 1);
-  }
-  const baseColor = getGrenadeColor(typeKey);
-  const center = worldToCanvas(worldPoint.x, worldPoint.y, scaleX, scaleY);
-  let radius = worldRadiusToCanvasRadius(effectConfig.radiusWorldUnits, scaleX, scaleY);
-
-  if (effectConfig.pulse) {
-    radius *= (0.65 + 0.35 * progress);
-  }
-
-  const fillAlpha = clamp((Number(effectConfig.fillAlpha) || 0.14) * fadeFactor, 0.02, 1);
-  const strokeAlpha = clamp((Number(effectConfig.strokeAlpha) || 0.7) * fadeFactor, 0.06, 1);
-
-  ctx.beginPath();
-  ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
-  ctx.fillStyle = hexToRgba(baseColor, fillAlpha);
-  ctx.fill();
-  ctx.lineWidth = Math.max(1, 1.5 * unitScale);
-  ctx.strokeStyle = hexToRgba(baseColor, strokeAlpha);
-  ctx.stroke();
-}
-
-function distance3D(pointA, pointB) {
-  if (!pointA || !pointB) {
-    return Number.POSITIVE_INFINITY;
-  }
-
-  const dx = Number(pointA.x) - Number(pointB.x);
-  const dy = Number(pointA.y) - Number(pointB.y);
-  const dz = Number(pointA.z) - Number(pointB.z);
-  return Math.sqrt((dx * dx) + (dy * dy) + (dz * dz));
-}
-
-function countTrailingStableSteps(points, stableDeltaWorldUnits) {
-  let steps = 0;
-  for (let index = points.length - 1; index >= 1; index -= 1) {
-    const delta = distance3D(points[index], points[index - 1]);
-    if (delta > stableDeltaWorldUnits) {
-      break;
-    }
-    steps += 1;
-  }
-  return steps;
-}
-
-function hasPreBurstMovement(points, stableStartPointIndex, minimumDelta) {
-  for (let index = 1; index <= stableStartPointIndex; index += 1) {
-    const delta = distance3D(points[index], points[index - 1]);
-    if (delta >= minimumDelta) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function passesStabilizationTravelCheck(stableStartPoint, firstRawPoint, minimumTravelUnits) {
-  if (minimumTravelUnits <= 0 || !firstRawPoint) {
-    return true;
-  }
-
-  return distance3D(stableStartPoint, firstRawPoint) >= minimumTravelUnits;
-}
-
-function detectExplosionFrameIndexByStabilization(trail) {
-  if (!trail || !Array.isArray(trail.points) || trail.points.length < 4) {
-    return null;
-  }
-
-  const effectConfig = GRENADE_EFFECT_CONFIG_BY_TYPE[normalizeGrenadeType(trail.grenadeType)] || null;
-  const requiredStableSteps = Math.max(6, Math.floor(currentTickrate * 0.18));
-  const trailingStableSteps = countTrailingStableSteps(trail.points, 0.1);
-  if (trailingStableSteps < requiredStableSteps) {
-    return null;
-  }
-
-  const stableStartPointIndex = Math.max(0, trail.points.length - trailingStableSteps - 1);
-  const stableStartPoint = trail.points[stableStartPointIndex];
-  const hasFrameIndex = stableStartPoint && Number.isFinite(Number(stableStartPoint.frameIndex));
-  if (!hasFrameIndex) {
-    return null;
-  }
-
-  const minimumDelta = Number(effectConfig?.preBurstMinDeltaWorldUnits) || 2.0;
-  if (!hasPreBurstMovement(trail.points, stableStartPointIndex, minimumDelta)) {
-    return null;
-  }
-
-  const minimumTravel = Number(effectConfig?.stabilizationMinTravelUnits) || 0;
-  if (!passesStabilizationTravelCheck(stableStartPoint, trail.firstRawPoint, minimumTravel)) {
-    return null;
-  }
-
-  return Number(stableStartPoint.frameIndex);
-}
-
-function findPointAtOrAfterFrame(points, targetFrameIndex) {
-  if (!Array.isArray(points) || points.length === 0) {
-    return null;
-  }
-
-  for (const point of points) {
-    if (point.frameIndex >= targetFrameIndex) {
-      return point;
-    }
-  }
-
-  return points[points.length - 1] || null;
-}
-
-function getEffectDurationFrames(effectConfig) {
-  return Math.max(0, Math.round((Number(effectConfig?.durationSeconds) || 0) * currentTickrate));
-}
-
-function deriveTailStartFrameIndex(trail, safeFrameIndex, effectConfig, effectDurationFrames) {
-  const lastSeenFrameIndex = trail.lastSeenFrameIndex;
-  const hasTailSignal = effectConfig?.deriveExplodeByTailDuration && effectDurationFrames > 0;
-  const enoughFrames = lastSeenFrameIndex - effectDurationFrames >= trail.firstSeenFrameIndex;
-  if (!hasTailSignal || safeFrameIndex <= lastSeenFrameIndex || !enoughFrames) {
-    return null;
-  }
-  return lastSeenFrameIndex - effectDurationFrames;
-}
-
-function clampEffectStartFrameIndex(effectStartFrameIndex, firstSeenFrameIndex, lastSeenFrameIndex) {
-  if (effectStartFrameIndex === null) {
-    return null;
-  }
-
-  const clamped = clamp(effectStartFrameIndex, firstSeenFrameIndex, lastSeenFrameIndex);
-  return Number.isFinite(clamped) ? clamped : null;
-}
-
-function resolveEffectStartFrameIndex(trail, safeFrameIndex, effectConfig, effectDurationFrames) {
-  if (!effectConfig) {
-    return null;
-  }
-
-  const stabilizationStart = effectConfig.detectExplodeByStabilization
-    ? detectExplosionFrameIndexByStabilization(trail)
-    : null;
-  const tailStart = deriveTailStartFrameIndex(trail, safeFrameIndex, effectConfig, effectDurationFrames);
-
-  if (tailStart !== null && stabilizationStart !== null) {
-    return clampEffectStartFrameIndex(
-      Math.max(tailStart, stabilizationStart),
-      trail.firstSeenFrameIndex,
-      trail.lastSeenFrameIndex,
-    );
-  }
-  if (tailStart !== null) {
-    return clampEffectStartFrameIndex(tailStart, trail.firstSeenFrameIndex, trail.lastSeenFrameIndex);
-  }
-  if (stabilizationStart !== null) {
-    return clampEffectStartFrameIndex(stabilizationStart, trail.firstSeenFrameIndex, trail.lastSeenFrameIndex);
-  }
-  if (safeFrameIndex > trail.lastSeenFrameIndex) {
-    return clampEffectStartFrameIndex(trail.lastSeenFrameIndex, trail.firstSeenFrameIndex, trail.lastSeenFrameIndex);
-  }
-  return null;
-}
-
-function getTrailVisibleUntilFrame(trail, exploded, effectStartFrameIndex, effectConfig, safeFrameIndex) {
-  if (!exploded) {
-    return safeFrameIndex;
-  }
-
-  const persistFrames = Math.max(
-    0,
-    Math.round((Number(effectConfig?.trailPersistSecondsAfterExplode) || 0) * currentTickrate),
-  );
-  return effectStartFrameIndex + persistFrames;
-}
-
-function shouldDrawGrenadeEffectCircle(effectConfig, exploded, effectElapsedSeconds, effectDurationFrames) {
-  if (!effectConfig || !exploded || effectElapsedSeconds < 0 || effectDurationFrames <= 0) {
-    return false;
-  }
-
-  const durationSeconds = effectDurationFrames / Math.max(currentTickrate, 1);
-  return effectElapsedSeconds <= durationSeconds;
-}
-
-function resolveGrenadeEffectState(trail, safeFrameIndex) {
-  const typeKey = normalizeGrenadeType(trail.grenadeType);
-  const effectConfig = GRENADE_EFFECT_CONFIG_BY_TYPE[typeKey] || null;
-  const effectDurationFrames = getEffectDurationFrames(effectConfig);
-  const effectStartFrameIndex = resolveEffectStartFrameIndex(
-    trail,
-    safeFrameIndex,
-    effectConfig,
-    effectDurationFrames,
-  );
-  const exploded = effectStartFrameIndex !== null && safeFrameIndex >= effectStartFrameIndex;
-  const trailVisibleUntilFrame = getTrailVisibleUntilFrame(
-    trail,
-    exploded,
-    effectStartFrameIndex,
-    effectConfig,
-    safeFrameIndex,
-  );
-  const effectElapsedSeconds = exploded ? (safeFrameIndex - effectStartFrameIndex) / Math.max(currentTickrate, 1) : -1;
-  const effectPoint = effectStartFrameIndex !== null ? findPointAtOrAfterFrame(trail.points, effectStartFrameIndex) : null;
-
-  return {
-    typeKey,
-    effectConfig,
-    exploded,
-    effectStartFrameIndex,
-    trailVisibleUntilFrame,
-    shouldDrawTrail: trailVisibleUntilFrame >= trail.firstSeenFrameIndex && safeFrameIndex <= trailVisibleUntilFrame,
-    shouldDrawEffectCircle: shouldDrawGrenadeEffectCircle(
-      effectConfig,
-      exploded,
-      effectElapsedSeconds,
-      effectDurationFrames,
-    ),
-    effectElapsedSeconds,
-    effectPoint: effectPoint || trail.lastSeenPoint,
-  };
-}
-
 function getGrenadeLookbackFrameCount() {
   const effectFrames = Math.ceil((MAX_GRENADE_EFFECT_SECONDS + MAX_GRENADE_TRAIL_PERSIST_SECONDS) * currentTickrate) + 8;
   return Math.max(GRENADE_TRAIL_MAX_FRAMES, effectFrames);
 }
 
-function toGrenadePoint(grenade, frameIndex) {
+function toGrenadePoint(grenade, frameIndex, tick) {
   const x = Number(grenade?.x);
   const y = Number(grenade?.y);
   const z = Number(grenade?.z);
   if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
     return null;
   }
-  return { x, y, z, frameIndex };
+  const pointTick = Number.isFinite(Number(tick)) ? Number(tick) : frameIndex;
+  return { x, y, z, frameIndex, tick: pointTick };
 }
 
 function getGrenadeEntityId(grenade, point) {
+  void point;
   if (grenade?.entity_id !== undefined && grenade?.entity_id !== null) {
     return String(grenade.entity_id);
   }
 
-  return `${grenade?.grenade_type || 'unknown'}-${Math.round(point.x)}-${Math.round(point.y)}-${Math.round(point.z)}`;
+  return '';
 }
 
-function createGrenadeTrail(entityId, grenadeType, point, frameIndex) {
+function createGrenadeTrail(entityId, grenadeType, point, frameIndex, frameTick, throwerTeamNum = null) {
   return {
     entityId,
     grenadeType: String(grenadeType || 'unknown'),
     points: [],
     firstSeenFrameIndex: frameIndex,
     lastSeenFrameIndex: frameIndex,
-    stabilizationStartFrameIndex: null,
-    stableRunFrames: 0,
-    hasMovedSignificantly: false,
-    firstRawPoint: point,
-    previousRawPoint: null,
-    lastSeenPoint: point,
+    firstSeenTick: frameTick,
+    lastSeenTick: frameTick,
+    throwerTeamNum: Number.isFinite(Number(throwerTeamNum)) ? Number(throwerTeamNum) : null,
   };
 }
 
-function getOrCreateGrenadeTrail(trailsByEntity, grenade, point, frameIndex) {
+function getOrCreateGrenadeTrail(trailsByEntity, grenade, point, frameIndex, frameTick) {
   const entityId = getGrenadeEntityId(grenade, point);
+  if (!entityId) {
+    return null;
+  }
   if (!trailsByEntity.has(entityId)) {
-    trailsByEntity.set(entityId, createGrenadeTrail(entityId, grenade?.grenade_type, point, frameIndex));
+    trailsByEntity.set(
+      entityId,
+      createGrenadeTrail(entityId, grenade?.grenade_type, point, frameIndex, frameTick, grenade?.thrower_team_num),
+    );
   }
   return trailsByEntity.get(entityId);
 }
 
-function updateGrenadeTrailMotion(trail, point, frameIndex) {
-  const effectConfig = GRENADE_EFFECT_CONFIG_BY_TYPE[normalizeGrenadeType(trail.grenadeType)] || null;
-  const minimumTravel = Number(effectConfig?.stabilizationMinTravelUnits) || 0;
-  const requiredStableFrames = Math.max(6, Math.floor(currentTickrate * 0.18));
-
+function updateGrenadeTrailMotion(trail, frameIndex, frameTick) {
   trail.lastSeenFrameIndex = frameIndex;
-  trail.lastSeenPoint = point;
-
-  if (!trail.hasMovedSignificantly && trail.firstRawPoint) {
-    trail.hasMovedSignificantly = distance3D(point, trail.firstRawPoint) >= minimumTravel;
-  }
-
-  if (trail.previousRawPoint) {
-    const rawDelta = distance3D(point, trail.previousRawPoint);
-    trail.stableRunFrames = trail.hasMovedSignificantly && rawDelta <= 0.1 ? trail.stableRunFrames + 1 : 0;
-    if (trail.stabilizationStartFrameIndex === null && trail.stableRunFrames >= requiredStableFrames) {
-      trail.stabilizationStartFrameIndex = frameIndex - trail.stableRunFrames;
-    }
-  }
-
-  trail.previousRawPoint = point;
+  trail.lastSeenTick = frameTick;
 }
 
 function collectGrenadeTrails(firstTrailFrame, safeFrameIndex) {
   const trailsByEntity = new Map();
 
   for (let frameIndex = firstTrailFrame; frameIndex <= safeFrameIndex; frameIndex += 1) {
+    const frameTick = getFrameTick(frameIndex);
     const frameGrenades = framesData[frameIndex]?.grenades;
     if (!Array.isArray(frameGrenades) || frameGrenades.length === 0) {
       continue;
     }
 
     for (const grenade of frameGrenades) {
-      const point = toGrenadePoint(grenade, frameIndex);
+      const point = toGrenadePoint(grenade, frameIndex, frameTick);
       if (!point) {
         continue;
       }
 
-      const trail = getOrCreateGrenadeTrail(trailsByEntity, grenade, point, frameIndex);
+      const trail = getOrCreateGrenadeTrail(trailsByEntity, grenade, point, frameIndex, frameTick);
+      if (!trail) {
+        continue;
+      }
       trail.grenadeType = String(grenade?.grenade_type || trail.grenadeType);
-      updateGrenadeTrailMotion(trail, point, frameIndex);
+      if (trail.throwerTeamNum === null && Number.isFinite(Number(grenade?.thrower_team_num))) {
+        trail.throwerTeamNum = Number(grenade.thrower_team_num);
+      }
+      updateGrenadeTrailMotion(trail, frameIndex, frameTick);
       trail.points.push(point);
     }
   }
 
   return trailsByEntity;
+}
+
+function getGrenadeEventEntityId(event) {
+  if (!event || typeof event !== 'object') {
+    return '';
+  }
+
+  if (event.entity_id !== undefined && event.entity_id !== null) {
+    return String(event.entity_id);
+  }
+  if (event.projectile_id !== undefined && event.projectile_id !== null) {
+    return String(event.projectile_id);
+  }
+  return '';
+}
+
+function toGrenadeEventPoint(event) {
+  const x = Number(event?.x);
+  const y = Number(event?.y);
+  const z = Number(event?.z);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
+    return null;
+  }
+  return { x, y, z };
+}
+
+function getOrCreateGrenadeEventState(statesByEntity, entityId) {
+  if (!statesByEntity.has(entityId)) {
+    statesByEntity.set(entityId, {
+      smokeStart: null,
+      smokeEnd: null,
+      heExplode: null,
+      flashExplode: null,
+      infernoStart: null,
+      infernoEnd: null,
+      throwerTeamNum: null,
+    });
+  }
+  return statesByEntity.get(entityId);
+}
+
+function collectGrenadeEventStates(firstFrameIndex, safeFrameIndex) {
+  const statesByEntity = new Map();
+  for (let frameIndex = firstFrameIndex; frameIndex <= safeFrameIndex; frameIndex += 1) {
+    const frameEvents = framesData[frameIndex]?.grenade_events;
+    if (!Array.isArray(frameEvents) || frameEvents.length === 0) {
+      continue;
+    }
+
+    for (const event of frameEvents) {
+      const entityId = getGrenadeEventEntityId(event);
+      if (!entityId) {
+        continue;
+      }
+
+      const state = getOrCreateGrenadeEventState(statesByEntity, entityId);
+      const eventType = String(event?.event_type || '').trim().toLowerCase();
+      const eventTick = Number(event?.tick);
+      if (!Number.isFinite(eventTick)) {
+        continue;
+      }
+      const eventPoint = toGrenadeEventPoint(event);
+      const throwerTeamNum = Number(event?.thrower_team_num);
+      if (Number.isFinite(throwerTeamNum)) {
+        state.throwerTeamNum = throwerTeamNum;
+      }
+
+      if (eventType === 'smoke_start') {
+        if (!state.smokeStart || eventTick <= state.smokeStart.tick) {
+          state.smokeStart = { tick: eventTick, point: eventPoint };
+        }
+      } else if (eventType === 'smoke_end') {
+        if (!state.smokeEnd || eventTick >= state.smokeEnd.tick) {
+          state.smokeEnd = { tick: eventTick, point: eventPoint };
+        }
+      } else if (eventType === 'he_explode') {
+        if (!state.heExplode || eventTick <= state.heExplode.tick) {
+          state.heExplode = { tick: eventTick, point: eventPoint };
+        }
+      } else if (eventType === 'flash_explode') {
+        if (!state.flashExplode || eventTick <= state.flashExplode.tick) {
+          state.flashExplode = { tick: eventTick, point: eventPoint };
+        }
+      } else if (eventType === 'inferno_start') {
+        if (!state.infernoStart || eventTick <= state.infernoStart.tick) {
+          state.infernoStart = { tick: eventTick, point: eventPoint };
+        }
+      } else if (eventType === 'inferno_end') {
+        if (!state.infernoEnd || eventTick >= state.infernoEnd.tick) {
+          state.infernoEnd = { tick: eventTick, point: eventPoint };
+        }
+      }
+    }
+  }
+  return statesByEntity;
+}
+
+function drawSmokeEventCircle(worldPoint, throwerTeamNum, elapsedSeconds, durationSeconds, scaleX, scaleY, unitScale) {
+  if (!worldPoint) {
+    return;
+  }
+
+  const center = worldToCanvas(worldPoint.x, worldPoint.y, scaleX, scaleY);
+  const radius = worldRadiusToCanvasRadius(144, scaleX, scaleY);
+  const progress = durationSeconds > 0 ? clamp(elapsedSeconds / durationSeconds, 0, 1) : 0;
+  const teamColor = Number.isFinite(Number(throwerTeamNum)) ? getTeamColorHex(Number(throwerTeamNum)) : '#7f8c8d';
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(127, 140, 141, 0.24)';
+  ctx.fill();
+  ctx.fillStyle = hexToRgba(teamColor, 0.14);
+  ctx.fill();
+  ctx.lineWidth = Math.max(1, 1.6 * unitScale);
+  ctx.strokeStyle = hexToRgba(teamColor, 0.48);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(center.x, center.y, Math.max(4, radius * 0.26), -Math.PI / 2, -Math.PI / 2 - (Math.PI * 2 * progress), true);
+  ctx.lineWidth = Math.max(1, 1.2 * unitScale);
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.75)';
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawPulseEventCircle(grenadeType, worldPoint, elapsedSeconds, durationSeconds, scaleX, scaleY, unitScale) {
+  if (!worldPoint || elapsedSeconds < 0 || elapsedSeconds > durationSeconds) {
+    return;
+  }
+
+  const safeDuration = Math.max(durationSeconds, 0.01);
+  const progress = clamp(elapsedSeconds / safeDuration, 0, 1);
+  const typeKey = normalizeGrenadeType(grenadeType);
+  const effectConfig = GRENADE_EFFECT_CONFIG_BY_TYPE[typeKey] || GRENADE_EFFECT_CONFIG_BY_TYPE.he;
+  const center = worldToCanvas(worldPoint.x, worldPoint.y, scaleX, scaleY);
+  const baseRadius = worldRadiusToCanvasRadius(effectConfig.radiusWorldUnits || 260, scaleX, scaleY);
+  const radius = baseRadius * (0.35 + ((1 - progress) * 0.65));
+  const alpha = clamp(0.3 * (1 - progress), 0.04, 0.35);
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
+  ctx.fillStyle = hexToRgba(getGrenadeColor(typeKey), alpha);
+  ctx.fill();
+  ctx.restore();
+}
+
+function resolveGrenadeEventEffectState(trail, grenadeEventState, safeTick) {
+  if (!trail || !grenadeEventState || !Number.isFinite(Number(safeTick))) {
+    return null;
+  }
+
+  const typeKey = normalizeGrenadeType(trail.grenadeType);
+  const tickValue = Number(safeTick);
+  const eventTeamNum = Number.isFinite(Number(grenadeEventState.throwerTeamNum))
+    ? Number(grenadeEventState.throwerTeamNum)
+    : trail.throwerTeamNum;
+  if (typeKey === 'smoke') {
+    if (!grenadeEventState.smokeStart) {
+      return null;
+    }
+    const startTick = Number(grenadeEventState.smokeStart.tick);
+    const endTick = Number(grenadeEventState.smokeEnd?.tick);
+    const hasEndTick = Number.isFinite(endTick) && endTick >= startTick;
+    if (!Number.isFinite(startTick)) {
+      return null;
+    }
+    return {
+      kind: 'smoke',
+      active: tickValue >= startTick && (!hasEndTick || tickValue <= endTick),
+      hideTrail: tickValue >= startTick,
+      trailVisibleUntilTick: startTick,
+      point: grenadeEventState.smokeStart.point || null,
+      elapsedSeconds: Math.max(0, tickValue - startTick) / Math.max(currentTickrate, 1),
+      durationSeconds: hasEndTick ? Math.max(0.1, (endTick - startTick) / Math.max(currentTickrate, 1)) : Number.POSITIVE_INFINITY,
+      throwerTeamNum: eventTeamNum,
+    };
+  }
+
+  if ((typeKey === 'he' || typeKey === 'flash') && (grenadeEventState.heExplode || grenadeEventState.flashExplode)) {
+    const explode = typeKey === 'he' ? grenadeEventState.heExplode : grenadeEventState.flashExplode;
+    const explodeTick = Number(explode.tick);
+    if (!Number.isFinite(explodeTick)) {
+      return null;
+    }
+    const durationSeconds = 1;
+    const elapsedSeconds = (tickValue - explodeTick) / Math.max(currentTickrate, 1);
+    return {
+      kind: 'pulse',
+      active: tickValue >= explodeTick && elapsedSeconds <= durationSeconds,
+      hideTrail: tickValue >= explodeTick,
+      trailVisibleUntilTick: explodeTick,
+      point: explode.point || null,
+      elapsedSeconds,
+      durationSeconds,
+      grenadeType: typeKey,
+    };
+  }
+
+  if (typeKey === 'molotov' || typeKey === 'incendiary') {
+    if (!grenadeEventState.infernoStart) {
+      return null;
+    }
+    const startTick = Number(grenadeEventState.infernoStart.tick);
+    const endTick = Number(grenadeEventState.infernoEnd?.tick);
+    const hasEndTick = Number.isFinite(endTick) && endTick >= startTick;
+    if (!Number.isFinite(startTick)) {
+      return null;
+    }
+    return {
+      kind: 'pulse',
+      active: tickValue >= startTick && (!hasEndTick || tickValue <= endTick),
+      hideTrail: tickValue >= startTick,
+      trailVisibleUntilTick: startTick,
+      point: grenadeEventState.infernoStart.point || null,
+      elapsedSeconds: Math.max(0, tickValue - startTick) / Math.max(currentTickrate, 1),
+      durationSeconds: hasEndTick ? Math.max(0.1, (endTick - startTick) / Math.max(currentTickrate, 1)) : Number.POSITIVE_INFINITY,
+      grenadeType: typeKey,
+      throwerTeamNum: eventTeamNum,
+    };
+  }
+
+  return null;
 }
 
 function getGrenadeInterpolationKey(grenade) {
@@ -506,10 +547,7 @@ function getGrenadeInterpolationKey(grenade) {
     return String(grenade.entity_id);
   }
 
-  const x = Number(grenade.x) || 0;
-  const y = Number(grenade.y) || 0;
-  const z = Number(grenade.z) || 0;
-  return `${grenade.grenade_type || 'unknown'}-${Math.round(x)}-${Math.round(y)}-${Math.round(z)}`;
+  return '';
 }
 
 function buildGrenadeMapByKey(grenades) {
@@ -539,6 +577,8 @@ function buildInterpolatedGrenadePoints(lowerFrameIndex, upperFrameIndex, alpha)
   }
 
   const lowerByKey = buildGrenadeMapByKey(lowerGrenades);
+  const lowerTick = getFrameTick(lowerFrameIndex);
+  const upperTick = getFrameTick(upperFrameIndex);
   const interpolated = new Map();
   for (const upperGrenade of upperGrenades) {
     const key = getGrenadeInterpolationKey(upperGrenade);
@@ -565,6 +605,7 @@ function buildInterpolatedGrenadePoints(lowerFrameIndex, upperFrameIndex, alpha)
       y: lerpNumber(lowerY, upperY, alpha),
       z: lerpNumber(lowerZ, upperZ, alpha),
       frameIndex: lowerFrameIndex + alpha,
+      tick: lerpNumber(lowerTick, upperTick, alpha),
     });
   }
 
@@ -611,29 +652,66 @@ function drawGrenadeTrailWithEffect(
   trail,
   firstTrailFrame,
   safeFrameIndex,
+  safeTick,
   scaleX,
   scaleY,
   unitScale,
   interpolatedPointsByEntity = null,
+  grenadeEventStatesByEntity = null,
 ) {
   if (!Array.isArray(trail.points) || trail.points.length === 0 || trail.lastSeenFrameIndex < firstTrailFrame) {
     return;
   }
 
-  const effectState = resolveGrenadeEffectState(trail, safeFrameIndex);
-  if (effectState.shouldDrawEffectCircle && effectState.effectPoint) {
-    drawGrenadeEffectCircle(trail.grenadeType, effectState.effectPoint, effectState.effectElapsedSeconds, scaleX, scaleY, unitScale);
+  const grenadeEventState = grenadeEventStatesByEntity?.get(trail.entityId) || null;
+  const eventEffectState = resolveGrenadeEventEffectState(trail, grenadeEventState, safeTick);
+  let trailVisibleUntilFrame = Math.min(safeFrameIndex, trail.lastSeenFrameIndex + 1);
+  let shouldDrawTrail = safeFrameIndex <= (trail.lastSeenFrameIndex + 1);
+
+  if (eventEffectState) {
+    const trailVisibleUntilTick = Number(eventEffectState.trailVisibleUntilTick);
+    if (Number.isFinite(trailVisibleUntilTick)) {
+      trailVisibleUntilFrame = findFrameIndexByTick(trailVisibleUntilTick);
+    }
+    shouldDrawTrail = !eventEffectState.hideTrail || safeTick < trailVisibleUntilTick;
+
+    if (eventEffectState.kind === 'smoke' && eventEffectState.active) {
+      drawSmokeEventCircle(
+        eventEffectState.point,
+        eventEffectState.throwerTeamNum,
+        eventEffectState.elapsedSeconds,
+        eventEffectState.durationSeconds,
+        scaleX,
+        scaleY,
+        unitScale,
+      );
+    }
+    if (eventEffectState.kind === 'pulse' && eventEffectState.active) {
+      drawPulseEventCircle(
+        eventEffectState.grenadeType || trail.grenadeType,
+        eventEffectState.point,
+        eventEffectState.elapsedSeconds,
+        eventEffectState.durationSeconds,
+        scaleX,
+        scaleY,
+        unitScale,
+      );
+    }
   }
-  if (!effectState.shouldDrawTrail) {
+
+  if (!shouldDrawTrail) {
     return;
   }
 
-  let visiblePoints = trail.points.filter((point) => point.frameIndex <= effectState.trailVisibleUntilFrame);
+  let visiblePoints = trail.points.filter((point) => point.frameIndex <= trailVisibleUntilFrame && point.tick <= safeTick);
   const interpolatedPoint = interpolatedPointsByEntity?.get(trail.entityId) || null;
   if (interpolatedPoint) {
     const mergedPoints = [...visiblePoints];
     const lastPoint = mergedPoints[mergedPoints.length - 1] || null;
-    if (!lastPoint || interpolatedPoint.frameIndex >= lastPoint.frameIndex) {
+    if (
+      (!lastPoint || interpolatedPoint.frameIndex >= lastPoint.frameIndex)
+      && (!Number.isFinite(Number(interpolatedPoint.tick)) || interpolatedPoint.tick <= safeTick)
+    ) {
       mergedPoints.push(interpolatedPoint);
       visiblePoints = mergedPoints;
     }
@@ -644,15 +722,23 @@ function drawGrenadeTrailWithEffect(
   }
 }
 
-function drawGrenadeTrails(frameIndex, scaleX, scaleY, unitScale, interpolation = null) {
+function drawGrenadeTrails(renderTick, scaleX, scaleY, unitScale, interpolation = null) {
   if (!framesData.length) {
     return;
   }
 
-  const safeFrameIndex = clamp(frameIndex, 0, framesData.length - 1);
+  const firstTick = getFrameTick(0);
+  const lastTick = getFrameTick(framesData.length - 1);
+  const tickValue = Number(renderTick);
+  if (!Number.isFinite(tickValue)) {
+    return;
+  }
+  const safeTick = clamp(tickValue, firstTick, lastTick);
+  const safeFrameIndex = findFrameIndexByTick(safeTick);
   const floorFrameIndex = Math.floor(safeFrameIndex);
   const firstTrailFrame = Math.max(0, floorFrameIndex - getGrenadeLookbackFrameCount());
   const trailsByEntity = collectGrenadeTrails(firstTrailFrame, floorFrameIndex);
+  const grenadeEventStatesByEntity = collectGrenadeEventStates(0, floorFrameIndex);
   const interpolatedPointsByEntity = buildInterpolatedGrenadePoints(
     floorFrameIndex,
     Number(interpolation?.upperIndex ?? floorFrameIndex + 1),
@@ -664,10 +750,12 @@ function drawGrenadeTrails(frameIndex, scaleX, scaleY, unitScale, interpolation 
       trail,
       firstTrailFrame,
       safeFrameIndex,
+      safeTick,
       scaleX,
       scaleY,
       unitScale,
       interpolatedPointsByEntity,
+      grenadeEventStatesByEntity,
     );
   }
 }
@@ -688,7 +776,7 @@ function getPlayerTeamColor(player) {
 }
 
 function buildTeamSlotRects(panelRect) {
-  const inset = 4;
+  const inset = 1;
   const bodyX = panelRect.x + inset;
   const bodyY = panelRect.y + inset;
   const bodyWidth = Math.max(1, panelRect.width - (inset * 2));
@@ -715,13 +803,13 @@ function drawTeamSlotHud(player, slotRect, slotIndex, teamNum, unitScale) {
   const hpText = `HP ${hp}`;
   const teamColor = getTeamColorHex(player?.team_num || teamNum);
   const money = isEmpty ? '$0' : `$${coerceNonNegativeInteger(player?.balance, 0)}`;
-  const barInset = Math.max(4, 4 * unitScale);
-  const barHeight = Math.max(7, 7 * unitScale);
+  const barInset = Math.max(2, 2 * unitScale);
+  const barHeight = Math.max(14, 14 * unitScale);
   const barY = slotRect.y + ((slotRect.height - barHeight) / 2);
   const barWidth = Math.max(1, slotRect.width - (barInset * 2));
   const fillWidth = barWidth * (hp / 100);
-  const labelY = barY - Math.max(4, 5 * unitScale);
-  const valueY = barY + barHeight + Math.max(10, 9 * unitScale);
+  const labelY = barY - Math.max(2, 2 * unitScale);
+  const valueY = barY + barHeight + Math.max(4, 4 * unitScale);
 
   ctx.save();
   ctx.globalAlpha = slotOpacity;
@@ -798,44 +886,100 @@ function drawKillFeedHud(frameIndex, layout, unitScale) {
   const drawCount = Math.min(kills.length, 6);
   const rowHeight = Math.max(22, 22 * unitScale);
   const rowGap = Math.max(6, 6 * unitScale);
-  const rowRadius = Math.max(6, 6 * unitScale);
   const iconSize = Math.max(14, rowHeight - 8);
   const fontSize = Math.max(11, 11 * unitScale);
-  const areaWidth = Math.max(200, layout.killArea.width);
-  const rowWidth = Math.min(360, areaWidth);
+  const maxRowWidth = Math.max(100, layout.killArea.width);
+  const killAreaRight = layout.killArea.x + maxRowWidth;
   let rowY = layout.killArea.y;
+
+  ctx.save();
+  ctx.font = `700 ${fontSize}px Segoe UI`;
+  ctx.textBaseline = 'middle';
 
   for (let index = 0; index < drawCount; index += 1) {
     const kill = kills[index];
-    const rowX = layout.killArea.x + (areaWidth - rowWidth);
-    const rowRect = { x: rowX, y: rowY, width: rowWidth, height: rowHeight };
-    const iconX = rowRect.x + ((rowRect.width - iconSize) / 2);
-    const iconY = rowRect.y + ((rowRect.height - iconSize) / 2);
     const sideGap = Math.max(6, 6 * unitScale);
-    const sideWidth = Math.max(20, ((rowRect.width - iconSize) / 2) - (sideGap * 2));
+    const maxSideWidth = Math.max(24, (maxRowWidth - iconSize - (sideGap * 4)) / 2);
+    const attackerText = fitTextByWidth(kill.attacker, maxSideWidth);
+    const victimText = fitTextByWidth(kill.victim, maxSideWidth);
+    const attackerWidth = Math.ceil(ctx.measureText(attackerText).width);
+    const victimWidth = Math.ceil(ctx.measureText(victimText).width);
+    const rowWidth = Math.max(
+      iconSize + (sideGap * 4),
+      attackerWidth + victimWidth + iconSize + (sideGap * 4),
+    );
+    const rowX = killAreaRight - rowWidth;
+    const rowCenterY = rowY + (rowHeight / 2);
+    const attackerTextRightX = rowX + sideGap + attackerWidth;
+    const iconX = attackerTextRightX + sideGap;
+    const iconY = rowY + ((rowHeight - iconSize) / 2);
+    const victimTextX = iconX + iconSize + sideGap;
 
-    ctx.save();
-    ctx.font = `700 ${fontSize}px Segoe UI`;
-    ctx.textBaseline = 'middle';
-    const attackerText = fitTextByWidth(kill.attacker, sideWidth);
-    const victimText = fitTextByWidth(kill.victim, sideWidth);
     ctx.textAlign = 'right';
     ctx.fillStyle = getTeamColorHex(kill.attackerTeamNum);
-    ctx.fillText(attackerText, iconX - sideGap, rowRect.y + (rowRect.height / 2));
+    ctx.fillText(attackerText, attackerTextRightX, rowCenterY);
     ctx.textAlign = 'left';
     ctx.fillStyle = getTeamColorHex(kill.victimTeamNum);
-    ctx.fillText(victimText, iconX + iconSize + sideGap, rowRect.y + (rowRect.height / 2));
+    ctx.fillText(victimText, victimTextX, rowCenterY);
     drawKillWeaponIcon(kill, iconX, iconY, iconSize, unitScale);
-    ctx.restore();
 
     rowY += rowHeight + rowGap;
   }
+
+  ctx.restore();
 }
 
-function drawCanvasHud(players, frameIndex, layout, unitScale) {
+function drawRoundClockOnCanvas(layout, unitScale, renderTick = null) {
+  if (typeof getRoundClockState !== 'function' || typeof formatMatchClock !== 'function') {
+    return;
+  }
+
+  const effectiveTick = Number.isFinite(Number(renderTick))
+    ? Number(renderTick)
+    : (typeof getFrameTick === 'function' ? getFrameTick(currentFrameIndex) : currentPlaybackTick);
+  const clockState = getRoundClockState(effectiveTick);
+  if (!clockState) {
+    return;
+  }
+
+  const phaseLabel = clockState.phase === 'bomb' ? 'Bomb' : 'Round';
+  const remainingText = formatMatchClock(clockState.remainingSeconds || 0);
+  const totalText = formatMatchClock(clockState.totalSeconds || 0);
+  const clockText = `${phaseLabel} ${remainingText}/${totalText}`;
+
+  const fontSize = Math.max(13, 11 * unitScale);
+  const paddingX = Math.max(10, 8 * unitScale);
+  const paddingY = Math.max(5, 4 * unitScale);
+  const boxHeight = fontSize + paddingY * 2;
+  const marginFromTop = Math.max(8, 6 * unitScale);
+  const boxY = layout.map.y + marginFromTop;
+
+  ctx.save();
+  ctx.font = `700 ${fontSize}px Segoe UI`;
+  const textWidth = ctx.measureText(clockText).width;
+  const boxWidth = textWidth + paddingX * 2;
+  const boxX = layout.map.x + (layout.map.width - boxWidth) / 2;
+
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.72)';
+  drawRoundedRectPath(boxX, boxY, boxWidth, boxHeight, Math.max(5, 4 * unitScale));
+  ctx.fill();
+
+  if (clockState.phase === 'bomb') {
+    ctx.fillStyle = '#ff4444';
+  } else {
+    ctx.fillStyle = '#ffffff';
+  }
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(clockText, layout.map.x + layout.map.width / 2, boxY + boxHeight / 2);
+  ctx.restore();
+}
+
+function drawCanvasHud(players, frameIndex, layout, unitScale, renderTick = null) {
   const slotsByTeam = typeof getHudTeamSlotsForFrame === 'function'
     ? getHudTeamSlotsForFrame(players)
     : { [TEAM_NUM_T]: [], [TEAM_NUM_CT]: [] };
+  drawRoundClockOnCanvas(layout, unitScale, renderTick);
   drawTeamPanelHud(layout.leftPanel, TEAM_NUM_T, slotsByTeam[TEAM_NUM_T], unitScale);
   drawTeamPanelHud(layout.rightPanel, TEAM_NUM_CT, slotsByTeam[TEAM_NUM_CT], unitScale);
   drawKillFeedHud(frameIndex, layout, unitScale);
@@ -1122,6 +1266,7 @@ function resolveFrameBlendByTick(targetTick) {
 }
 
 function renderFrame(players, frameIndex = 0, renderTick = null, grenadeInterpolation = null) {
+  syncReplayCanvasSize();
   const safePlayers = Array.isArray(players) ? players : [];
   const layout = buildCanvasHudLayout();
   updateMapViewport(layout.map);
@@ -1144,13 +1289,15 @@ function renderFrame(players, frameIndex = 0, renderTick = null, grenadeInterpol
   });
   ctx.restore();
 
-  drawCanvasHud(safePlayers, frameIndex, layout, unitScale);
+  drawCanvasHud(safePlayers, frameIndex, layout, unitScale, renderTick);
 }
 
 function renderEmptyFrame() {
   if (typeof resetHudState === 'function') {
     resetHudState();
   }
+  currentPlaybackTickRaw = currentRoundStartTick;
+  currentPlaybackTick = currentRoundStartTick;
   renderFrame([], 0, currentRoundStartTick);
 }
 
@@ -1163,6 +1310,7 @@ function renderFrameByIndex(index) {
 
   const safeIndex = clamp(index, 0, framesData.length - 1);
   const targetTick = getFrameTick(safeIndex);
+  currentPlaybackTickRaw = targetTick;
   currentPlaybackTick = targetTick;
   return renderFrameByTick(targetTick);
 }
@@ -1186,14 +1334,6 @@ function renderFrameByTick(targetTick) {
   });
   updateProgressBar(blend.lowerIndex, blend.tick);
   return blend.lowerIndex;
-}
-
-function findFrameIndexForTargetTick(startIndex, targetTick) {
-  let index = clamp(startIndex, 0, Math.max(framesData.length - 1, 0));
-  while (index + 1 < framesData.length && getFrameTick(index + 1) <= targetTick) {
-    index += 1;
-  }
-  return index;
 }
 
 function preparePlaybackAdvance(timestampMs) {
@@ -1220,13 +1360,17 @@ function advancePlaybackByTimestamp(timestampMs) {
 
   const firstTick = getFrameTick(0);
   const lastTick = getFrameTick(framesData.length - 1);
-  if (!Number.isFinite(currentPlaybackTick) || currentPlaybackTick < firstTick || currentPlaybackTick > lastTick) {
-    currentPlaybackTick = getFrameTick(currentFrameIndex);
+  if (
+    !Number.isFinite(currentPlaybackTickRaw)
+    || currentPlaybackTickRaw < firstTick
+    || currentPlaybackTickRaw > lastTick
+  ) {
+    currentPlaybackTickRaw = getFrameTick(currentFrameIndex);
   }
 
-  currentPlaybackTick = clamp(currentPlaybackTick + ticksToAdvance, firstTick, lastTick);
-  currentPlaybackTick = clamp(quantizePlaybackTick(currentPlaybackTick), firstTick, lastTick);
-  renderFrameByTick(currentPlaybackTick);
+  currentPlaybackTickRaw = clamp(currentPlaybackTickRaw + ticksToAdvance, firstTick, lastTick);
+  const displayTick = clamp(quantizePlaybackTick(currentPlaybackTickRaw), firstTick, lastTick);
+  renderFrameByTick(displayTick);
   playbackLastTimestamp = timestampMs;
 }
 
@@ -1236,10 +1380,11 @@ function finishPlaybackWhenEnded() {
   }
 
   const finalTick = getFrameTick(framesData.length - 1);
-  if (currentPlaybackTick < finalTick) {
+  if (currentPlaybackTickRaw < finalTick) {
     return false;
   }
 
+  currentPlaybackTickRaw = finalTick;
   currentPlaybackTick = finalTick;
   renderFrameByTick(finalTick);
   pausePlayback();
@@ -1292,6 +1437,7 @@ function handleScrubInput() {
 
   const targetIndex = Number(progressBar.value) || 0;
   currentFrameIndex = renderFrameByIndex(targetIndex);
+  currentPlaybackTickRaw = currentPlaybackTick;
 }
 
 function handleScrubEnd() {
@@ -1301,9 +1447,9 @@ function handleScrubEnd() {
 
   const targetIndex = Number(progressBar.value) || 0;
   currentFrameIndex = renderFrameByIndex(targetIndex);
+  currentPlaybackTickRaw = currentPlaybackTick;
   isUserScrubbing = false;
 
   // Requirement: resume playback from selected frame after release.
   resumePlayback();
 }
-

@@ -4,6 +4,13 @@
     roundsCount: toNumber(getScalar(database, 'SELECT COUNT(*) FROM rounds')),
     roundFramesCount: toNumber(getScalar(database, 'SELECT COUNT(*) FROM round_frames')),
     playerPositionsCount: toNumber(getScalar(database, 'SELECT COUNT(*) FROM player_positions')),
+    roundKillsCount: toNumber(getScalar(database, 'SELECT COUNT(*) FROM round_kills')),
+    roundShotsCount: toNumber(getScalar(database, 'SELECT COUNT(*) FROM round_shots')),
+    roundBlindsCount: toNumber(getScalar(database, 'SELECT COUNT(*) FROM round_blinds')),
+    roundDamagesCount: toNumber(getScalar(database, 'SELECT COUNT(*) FROM round_damages')),
+    roundGrenadesCount: toNumber(getScalar(database, 'SELECT COUNT(*) FROM round_grenades')),
+    roundGrenadeEventsCount: toNumber(getScalar(database, 'SELECT COUNT(*) FROM round_grenade_events')),
+    roundBombEventsCount: toNumber(getScalar(database, 'SELECT COUNT(*) FROM round_bomb_events')),
     parsedDemosCount: toNumber(getScalar(database, 'SELECT COUNT(*) FROM demos WHERE is_parsed = 1')),
   };
 }

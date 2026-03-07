@@ -21,6 +21,7 @@ const {
   saveDemoIndex,
   saveRoundFrames,
   saveRoundFramesBatch,
+  saveRoundDataFromCsv,
   getRoundFrames,
   getRoundPlayerPositions,
   getCachedRoundsCount,
@@ -85,6 +86,89 @@ function normalizeKillsForFixedTickrate(kills, sourceTickrate, fixedTick) {
   }));
 }
 
+function normalizeTickedEventsForFixedTickrate(events, sourceTickrate, fixedTick) {
+  if (!Array.isArray(events) || events.length === 0) {
+    return [];
+  }
+
+  return events.map((event) => ({
+    ...event,
+    tick: toFixedTick(event?.tick ?? fixedTick, sourceTickrate),
+  }));
+}
+
+function normalizeBombEventsForFixedTickrate(events, sourceTickrate, fixedTick) {
+  if (!Array.isArray(events) || events.length === 0) {
+    return [];
+  }
+
+  return events.map((event) => ({
+    ...event,
+    tick: toFixedTick(event?.tick ?? fixedTick, sourceTickrate),
+  }));
+}
+
+function normalizeOptionalTickForFixedTickrate(value, sourceTickrate) {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+
+  const tick = Number(value);
+  if (!Number.isFinite(tick) || tick < 0) {
+    return null;
+  }
+  return toFixedTick(tick, sourceTickrate);
+}
+
+function normalizeOptionalTick(value) {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+
+  const tick = Number(value);
+  if (!Number.isFinite(tick) || tick < 0) {
+    return null;
+  }
+
+  return Math.floor(tick);
+}
+
+function resolveEffectiveSourceTickrate(sourceTickrate, payloadTickrate = null) {
+  const payloadTickrateNumber = Number(payloadTickrate);
+  if (Number.isFinite(payloadTickrateNumber) && payloadTickrateNumber > 0) {
+    return payloadTickrateNumber;
+  }
+
+  const sourceTickrateNumber = Number(sourceTickrate);
+  if (Number.isFinite(sourceTickrateNumber) && sourceTickrateNumber > 0) {
+    return sourceTickrateNumber;
+  }
+
+  return FIXED_TICKRATE;
+}
+
+function isLikelyAlreadyFixedRoundTicks(round) {
+  if (!round || typeof round !== 'object') {
+    return false;
+  }
+
+  const startTick = Number(round?.start_tick);
+  const endTick = Number(round?.end_tick);
+  const durationSeconds = Number(round?.duration_seconds);
+  if (
+    !Number.isFinite(startTick)
+    || !Number.isFinite(endTick)
+    || !Number.isFinite(durationSeconds)
+    || durationSeconds <= 0
+    || endTick <= startTick
+  ) {
+    return false;
+  }
+
+  const impliedTickrate = (endTick - startTick) / durationSeconds;
+  return Math.abs(impliedTickrate - FIXED_TICKRATE) <= 0.75;
+}
+
 function normalizeFrameForFixedTickrate(frame, sourceTickrate) {
   const fixedTick = toFixedTick(frame?.tick, sourceTickrate);
   const normalizedFrame = {
@@ -92,10 +176,19 @@ function normalizeFrameForFixedTickrate(frame, sourceTickrate) {
     tick: fixedTick,
     players: Array.isArray(frame?.players) ? frame.players : [],
     kills: normalizeKillsForFixedTickrate(frame?.kills, sourceTickrate, fixedTick),
+    shots: normalizeTickedEventsForFixedTickrate(frame?.shots, sourceTickrate, fixedTick),
+    blinds: normalizeTickedEventsForFixedTickrate(frame?.blinds, sourceTickrate, fixedTick),
+    damages: normalizeTickedEventsForFixedTickrate(frame?.damages, sourceTickrate, fixedTick),
   };
 
   if (Object.prototype.hasOwnProperty.call(frame || {}, 'grenades')) {
     normalizedFrame.grenades = Array.isArray(frame?.grenades) ? frame.grenades : [];
+  }
+  if (Object.prototype.hasOwnProperty.call(frame || {}, 'grenade_events')) {
+    normalizedFrame.grenade_events = Array.isArray(frame?.grenade_events) ? frame.grenade_events : [];
+  }
+  if (Object.prototype.hasOwnProperty.call(frame || {}, 'bomb_events')) {
+    normalizedFrame.bomb_events = normalizeBombEventsForFixedTickrate(frame?.bomb_events, sourceTickrate, fixedTick);
   }
 
   return normalizedFrame;
@@ -119,7 +212,31 @@ function normalizeFramesForFixedTickrate(frames, sourceTickrate) {
     if (Object.prototype.hasOwnProperty.call(normalizedFrame, 'grenades')) {
       existing.grenades = normalizedFrame.grenades;
     }
+    if (Object.prototype.hasOwnProperty.call(normalizedFrame, 'grenade_events')) {
+      existing.grenade_events = [
+        ...(Array.isArray(existing.grenade_events) ? existing.grenade_events : []),
+        ...normalizedFrame.grenade_events,
+      ];
+    }
+    if (Object.prototype.hasOwnProperty.call(normalizedFrame, 'bomb_events')) {
+      existing.bomb_events = [
+        ...(Array.isArray(existing.bomb_events) ? existing.bomb_events : []),
+        ...normalizedFrame.bomb_events,
+      ];
+    }
     existing.kills = [...existing.kills, ...normalizedFrame.kills];
+    existing.shots = [
+      ...(Array.isArray(existing.shots) ? existing.shots : []),
+      ...normalizedFrame.shots,
+    ];
+    existing.blinds = [
+      ...(Array.isArray(existing.blinds) ? existing.blinds : []),
+      ...normalizedFrame.blinds,
+    ];
+    existing.damages = [
+      ...(Array.isArray(existing.damages) ? existing.damages : []),
+      ...normalizedFrame.damages,
+    ];
   }
 
   return [...frameByTick.values()].sort((left, right) => left.tick - right.tick);
@@ -130,14 +247,44 @@ function normalizeRoundForFixedTickrate(round, sourceTickrate) {
     return round;
   }
 
+  const effectiveSourceTickrate = resolveEffectiveSourceTickrate(sourceTickrate, round?.tickrate);
+  const hasRawTickFields = Object.prototype.hasOwnProperty.call(round, 'raw_start_tick')
+    || Object.prototype.hasOwnProperty.call(round, 'raw_end_tick');
+  if (!hasRawTickFields && isLikelyAlreadyFixedRoundTicks(round)) {
+    const fixedStartTick = toInteger(round?.start_tick);
+    const fixedEndTick = toInteger(round?.end_tick, fixedStartTick);
+    return {
+      ...round,
+      raw_start_tick: fixedStartTick,
+      raw_end_tick: fixedEndTick,
+      start_tick: fixedStartTick,
+      end_tick: fixedEndTick,
+      bomb_planted_tick: normalizeOptionalTick(round?.bomb_planted_tick),
+      bomb_defused_tick: normalizeOptionalTick(round?.bomb_defused_tick),
+      bomb_exploded_tick: normalizeOptionalTick(round?.bomb_exploded_tick),
+    };
+  }
+
   const rawStartTick = toInteger(round.raw_start_tick ?? round.start_tick);
   const rawEndTick = toInteger(round.raw_end_tick ?? round.end_tick, rawStartTick);
   return {
     ...round,
     raw_start_tick: rawStartTick,
     raw_end_tick: rawEndTick,
-    start_tick: toFixedTick(rawStartTick, sourceTickrate),
-    end_tick: toFixedTick(rawEndTick, sourceTickrate),
+    start_tick: toFixedTick(rawStartTick, effectiveSourceTickrate),
+    end_tick: toFixedTick(rawEndTick, effectiveSourceTickrate),
+    bomb_planted_tick: normalizeOptionalTickForFixedTickrate(
+      round?.raw_bomb_planted_tick ?? round?.bomb_planted_tick,
+      effectiveSourceTickrate,
+    ),
+    bomb_defused_tick: normalizeOptionalTickForFixedTickrate(
+      round?.raw_bomb_defused_tick ?? round?.bomb_defused_tick,
+      effectiveSourceTickrate,
+    ),
+    bomb_exploded_tick: normalizeOptionalTickForFixedTickrate(
+      round?.raw_bomb_exploded_tick ?? round?.bomb_exploded_tick,
+      effectiveSourceTickrate,
+    ),
   };
 }
 
@@ -150,17 +297,30 @@ function normalizeRoundsForFixedTickrate(rounds, sourceTickrate) {
 
 function normalizeRoundResponseForFixedTickrate(payload, sourceTickrate) {
   const normalized = { ...payload };
+  const effectiveSourceTickrate = resolveEffectiveSourceTickrate(sourceTickrate, payload?.tickrate);
   const rawStartTick = toInteger(payload?.raw_start_tick ?? payload?.start_tick);
   const rawEndTick = toInteger(payload?.raw_end_tick ?? payload?.end_tick, rawStartTick);
   normalized.raw_start_tick = rawStartTick;
   normalized.raw_end_tick = rawEndTick;
-  normalized.start_tick = toFixedTick(rawStartTick, sourceTickrate);
-  normalized.end_tick = toFixedTick(rawEndTick, sourceTickrate);
+  normalized.start_tick = toFixedTick(rawStartTick, effectiveSourceTickrate);
+  normalized.end_tick = toFixedTick(rawEndTick, effectiveSourceTickrate);
+  normalized.bomb_planted_tick = normalizeOptionalTickForFixedTickrate(
+    payload?.raw_bomb_planted_tick ?? payload?.bomb_planted_tick,
+    effectiveSourceTickrate,
+  );
+  normalized.bomb_defused_tick = normalizeOptionalTickForFixedTickrate(
+    payload?.raw_bomb_defused_tick ?? payload?.bomb_defused_tick,
+    effectiveSourceTickrate,
+  );
+  normalized.bomb_exploded_tick = normalizeOptionalTickForFixedTickrate(
+    payload?.raw_bomb_exploded_tick ?? payload?.bomb_exploded_tick,
+    effectiveSourceTickrate,
+  );
   normalized.tickrate = FIXED_TICKRATE;
-  normalized.frames = normalizeFramesForFixedTickrate(payload?.frames, sourceTickrate);
+  normalized.frames = normalizeFramesForFixedTickrate(payload?.frames, effectiveSourceTickrate);
 
   const sourceFrameStep = toInteger(payload?.frame_step, 1);
-  const normalizedStep = Math.max(1, Math.round(sourceFrameStep / resolveTickScale(sourceTickrate)));
+  const normalizedStep = Math.max(1, Math.round(sourceFrameStep / resolveTickScale(effectiveSourceTickrate)));
   normalized.frame_step = normalizedStep;
   return normalized;
 }
@@ -230,6 +390,44 @@ function parseParserOutput(state) {
   return JSON.parse(output);
 }
 
+function parseParserProgressLine(line) {
+  const text = String(line || '').trim();
+  if (!text.startsWith('PROGRESS|')) {
+    return null;
+  }
+
+  const parts = text.split('|');
+  if (parts.length < 4) {
+    return null;
+  }
+
+  const current = toInteger(parts[1], 0);
+  const total = toInteger(parts[2], 0);
+  const message = parts.slice(3).join('|').trim();
+  return { current, total, message };
+}
+
+function drainParserProgressBuffer(state, onProgress, flushAll = false) {
+  if (typeof onProgress !== 'function') {
+    state.stderrLineBuffer = '';
+    return;
+  }
+
+  const chunks = state.stderrLineBuffer.split(/\r?\n/);
+  if (!flushAll) {
+    state.stderrLineBuffer = chunks.pop() || '';
+  } else {
+    state.stderrLineBuffer = '';
+  }
+
+  for (const line of chunks) {
+    const parsed = parseParserProgressLine(line);
+    if (parsed) {
+      onProgress(parsed);
+    }
+  }
+}
+
 function handleParserClose(state) {
   const details = createProcessDetails(state);
   if (state.code !== 0) {
@@ -243,7 +441,7 @@ function handleParserClose(state) {
   }
 }
 
-function runParser(demoPath, mode, extraArgs = []) {
+function runParser(demoPath, mode, extraArgs = [], options = {}) {
   const pythonExecutable = resolveVenvPython(projectRoot);
   if (!pythonExecutable) {
     return Promise.resolve(buildMissingVenvError());
@@ -251,7 +449,15 @@ function runParser(demoPath, mode, extraArgs = []) {
 
   const parserArgs = buildParserArgs(demoPath, mode, extraArgs);
   return new Promise((resolve) => {
-    const state = { stdout: '', stderr: '', settled: false, code: null, pythonExecutable, parserArgs };
+    const state = {
+      stdout: '',
+      stderr: '',
+      stderrLineBuffer: '',
+      settled: false,
+      code: null,
+      pythonExecutable,
+      parserArgs,
+    };
     const processHandle = spawn(pythonExecutable, parserArgs, { cwd: projectRoot });
 
     const resolveOnce = (payload) => {
@@ -265,7 +471,10 @@ function runParser(demoPath, mode, extraArgs = []) {
     });
 
     processHandle.stderr.on('data', (chunk) => {
-      state.stderr += chunk.toString('utf8');
+      const text = chunk.toString('utf8');
+      state.stderr += text;
+      state.stderrLineBuffer += text;
+      drainParserProgressBuffer(state, options.onProgress, false);
     });
 
     processHandle.on('error', (error) => {
@@ -275,6 +484,7 @@ function runParser(demoPath, mode, extraArgs = []) {
 
     processHandle.on('close', (code) => {
       state.code = code;
+      drainParserProgressBuffer(state, options.onProgress, true);
       resolveOnce(handleParserClose(state));
     });
   });
@@ -288,6 +498,22 @@ function hasGrenadesInFrameCache(frames) {
   return frames.some((frame) => frame && Object.prototype.hasOwnProperty.call(frame, 'grenades'));
 }
 
+function hasGrenadeEventsInFrameCache(frames) {
+  if (!Array.isArray(frames) || frames.length === 0) {
+    return false;
+  }
+
+  return frames.some((frame) => frame && Object.prototype.hasOwnProperty.call(frame, 'grenade_events'));
+}
+
+function hasBombEventsInFrameCache(frames) {
+  if (!Array.isArray(frames) || frames.length === 0) {
+    return false;
+  }
+
+  return frames.some((frame) => frame && Object.prototype.hasOwnProperty.call(frame, 'bomb_events'));
+}
+
 function emitParseProgress(sender, payload) {
   if (!sender || typeof sender.send !== 'function') {
     return;
@@ -298,6 +524,46 @@ function emitParseProgress(sender, payload) {
   }
 
   sender.send('parse-progress', payload);
+}
+
+function withElapsed(payload, parseStartedAtMs) {
+  const safeStartedAt = Number(parseStartedAtMs);
+  if (!Number.isFinite(safeStartedAt) || safeStartedAt <= 0) {
+    return payload;
+  }
+  return {
+    ...payload,
+    elapsedMs: Math.max(Date.now() - safeStartedAt, 0),
+  };
+}
+
+function buildCsvFilesForImport(parserResult = {}) {
+  const csvFiles = parserResult.csv_files || parserResult.csvFiles || {};
+  const outputDir = String(parserResult.output_dir || parserResult.outputDir || '');
+  const fromDir = (fileName) => (outputDir ? path.join(outputDir, fileName) : '');
+
+  return {
+    round_meta: String(csvFiles.round_meta || csvFiles.roundMeta || fromDir('round_meta.csv')),
+    player_positions: String(csvFiles.players || csvFiles.player_positions || fromDir('player_positions.csv')),
+    kills: String(csvFiles.kills || fromDir('kills.csv')),
+    shots: String(csvFiles.shots || fromDir('shots.csv')),
+    blinds: String(csvFiles.blinds || fromDir('blinds.csv')),
+    damages: String(csvFiles.damages || fromDir('damages.csv')),
+    grenades: String(csvFiles.grenades || fromDir('grenades.csv')),
+    grenade_events: String(csvFiles.grenade_events || csvFiles.grenadeEvents || fromDir('grenade_events.csv')),
+    bomb_events: String(csvFiles.bomb_events || csvFiles.bombEvents || fromDir('bomb_events.csv')),
+  };
+}
+
+function cleanupCsvOutput(outputDir) {
+  if (!outputDir) {
+    return;
+  }
+  try {
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  } catch (error) {
+    console.warn(`[Parse CSV] cleanup failed for ${outputDir}: ${error.message}`);
+  }
 }
 
 function resetSelection(pathValue) {
@@ -595,10 +861,14 @@ async function handleParseCurrentDemo(event, payload = {}) {
     return parserResult;
   }
 
+  const parseStartedAtMs = Date.now();
   try {
-    return await performParseCurrentDemo(event, payload, parserResult);
+    return await performParseCurrentDemo(event, payload, parserResult, parseStartedAtMs);
   } catch (error) {
-    emitParseProgress(event.sender, { stage: 'error', message: `Parsing failed: ${error.message}` });
+    emitParseProgress(event.sender, withElapsed({
+      stage: 'error',
+      message: `Parsing failed: ${error.message}`,
+    }, parseStartedAtMs));
     return buildAnalyzeError(`Failed to persist demo: ${error.message}`, {
       demoPath: selectedDemoPath,
       checksum: selectedDemoChecksum,
@@ -606,29 +876,65 @@ async function handleParseCurrentDemo(event, payload = {}) {
   }
 }
 
-async function performParseCurrentDemo(event, payload, parserResult) {
+function buildCsvProgressPayload(progress, includeGrenades) {
+  const total = Math.max(toInteger(progress?.total, 0), 0);
+  const current = Math.min(Math.max(toInteger(progress?.current, 0), 0), total || Number.MAX_SAFE_INTEGER);
+  const percent = total > 0 ? Math.floor((current / total) * 100) : 0;
+  return {
+    stage: 'progress',
+    cacheMode: includeGrenades ? 'full' : 'fast',
+    includeGrenades,
+    current,
+    total,
+    percent: Math.min(Math.max(percent, 0), 100),
+    roundNumber: current,
+    message: String(progress?.message || `Round ${current}/${total} exported`),
+  };
+}
+
+async function performParseCurrentDemo(event, payload, parserResult, parseStartedAtMs) {
   const demoPathSnapshot = selectedDemoPath;
   const checksumSnapshot = selectedDemoChecksum;
   const persistedDemo = await persistDemoIndex(parserResult);
   const rounds = Array.isArray(persistedDemo.rounds) ? persistedDemo.rounds : [];
   const includeGrenades = String(payload.cacheMode || 'full').toLowerCase() !== 'fast';
-  const parseConcurrency = resolveParseConcurrency(payload);
-  const startPayload = buildParseStartPayload(rounds.length, includeGrenades);
-  if (rounds.length > 0) {
-    startPayload.message = `Preparing round parsing (${parseConcurrency} workers)...`;
+  emitParseProgress(event.sender, withElapsed({
+    ...buildParseStartPayload(rounds.length, includeGrenades),
+    message: rounds.length > 0 ? 'Starting single-pass CSV parser...' : 'No rounds detected',
+  }, parseStartedAtMs));
+
+  const csvOutputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cs2-export-'));
+  const parserExportResult = await runParser(
+    demoPathSnapshot,
+    'export_csv',
+    [includeGrenades ? 1 : 0, csvOutputDir],
+    {
+      onProgress: (progress) => {
+        emitParseProgress(event.sender, withElapsed(buildCsvProgressPayload(progress, includeGrenades), parseStartedAtMs));
+      },
+    },
+  );
+  if (parserExportResult.status !== 'success') {
+    cleanupCsvOutput(csvOutputDir);
+    return parserExportResult;
   }
 
-  emitParseProgress(event.sender, startPayload);
-
-  const parseResult = await parseAllRounds(
-    event,
-    demoPathSnapshot,
-    rounds,
-    persistedDemo.tickrate,
+  emitParseProgress(event.sender, withElapsed({
+    stage: 'progress',
     includeGrenades,
-    parseConcurrency,
-  );
-  await saveRoundFramesBatch(checksumSnapshot, parseResult.parsedRoundFrames, { replaceChecksum: true });
+    current: rounds.length,
+    total: rounds.length,
+    percent: 95,
+    message: 'Importing CSV into local database...',
+  }, parseStartedAtMs));
+
+  const csvFiles = buildCsvFilesForImport(parserExportResult);
+  let importCounts = null;
+  try {
+    importCounts = await saveRoundDataFromCsv(checksumSnapshot, csvFiles, { replaceChecksum: true });
+  } finally {
+    cleanupCsvOutput(parserExportResult.output_dir || csvOutputDir);
+  }
 
   const refreshedDemo = await getDemoByChecksum(checksumSnapshot);
   const response = await buildParseCurrentDemoSuccess(
@@ -636,15 +942,29 @@ async function performParseCurrentDemo(event, payload, parserResult) {
     persistedDemo,
     checksumSnapshot,
     rounds.length,
-    parseResult.failedRounds,
-    parseConcurrency,
+    [],
+    1,
+    parseStartedAtMs,
+    importCounts,
   );
 
-  emitParseProgress(event.sender, buildParseDonePayload(rounds.length, includeGrenades, parseResult.failedRounds.length));
+  emitParseProgress(event.sender, withElapsed(
+    buildParseDonePayload(rounds.length, includeGrenades, 0),
+    parseStartedAtMs,
+  ));
   return response;
 }
 
-async function buildParseCurrentDemoSuccess(refreshedDemo, persistedDemo, checksum, roundsCount, failedRounds, parseConcurrency) {
+async function buildParseCurrentDemoSuccess(
+  refreshedDemo,
+  persistedDemo,
+  checksum,
+  roundsCount,
+  failedRounds,
+  parseConcurrency,
+  parseStartedAtMs,
+  importCounts = null,
+) {
   const cachedRoundsCount = toInteger(refreshedDemo?.cachedRoundsCount);
   const cachedGrenadeRoundsCount = toInteger(refreshedDemo?.cachedGrenadeRoundsCount);
   const hasCompleteCache = roundsCount > 0
@@ -652,6 +972,7 @@ async function buildParseCurrentDemoSuccess(refreshedDemo, persistedDemo, checks
     && cachedGrenadeRoundsCount >= roundsCount;
   const sourceTickrate = Number(refreshedDemo?.tickrate || persistedDemo.tickrate) || 64;
   const rounds = normalizeRoundsForFixedTickrate(refreshedDemo?.rounds || persistedDemo.rounds, sourceTickrate);
+  const parseElapsedMs = Math.max(Date.now() - parseStartedAtMs, 0);
 
   return appendDbInfo({
     status: 'success',
@@ -669,6 +990,9 @@ async function buildParseCurrentDemoSuccess(refreshedDemo, persistedDemo, checks
     cachedGrenadeRoundsCount,
     failedRounds,
     parseConcurrency,
+    parseElapsedMs,
+    importCounts,
+    parsePipeline: 'single-pass-csv',
     cacheStatus: hasCompleteCache ? 'complete' : resolveCacheStatus(cachedRoundsCount, roundsCount, cachedGrenadeRoundsCount),
     fileExists: true,
   });
@@ -859,9 +1183,13 @@ function validateRoundRange(payload = {}) {
 
 function buildCachedRoundResponse(cachedRound, cachedRoundsCount, roundNumber) {
   const hasGrenades = Boolean(cachedRound.hasGrenades) || hasGrenadesInFrameCache(cachedRound.frames);
+  const hasGrenadeEvents = hasGrenadeEventsInFrameCache(cachedRound.frames);
+  const hasBombEvents = hasBombEventsInFrameCache(cachedRound.frames);
+  const hasFullGrenadeData = hasGrenades && hasGrenadeEvents;
+  const hasFullRoundData = hasFullGrenadeData && hasBombEvents;
   const payload = {
     status: 'success',
-    source: hasGrenades ? 'database-cache' : 'database-cache-legacy',
+    source: hasFullRoundData ? 'database-cache' : 'database-cache-legacy',
     mode: 'round',
     map: null,
     map_raw: null,
@@ -872,8 +1200,8 @@ function buildCachedRoundResponse(cachedRound, cachedRoundsCount, roundNumber) {
     frame_step: 1,
     frames: cachedRound.frames,
     cachedRoundsCount,
-    hasGrenades,
-    cacheNeedsUpgrade: !hasGrenades,
+    hasGrenades: hasFullGrenadeData,
+    cacheNeedsUpgrade: !hasFullRoundData,
   };
   return normalizeRoundResponseForFixedTickrate(payload, cachedRound.tickrate);
 }
@@ -975,13 +1303,14 @@ async function handleAnalyzeDemoRound(_event, payload = {}) {
 
   const checksumSnapshot = selectedDemoChecksum;
   const demoPathSnapshot = selectedDemoPath;
+  let cachedLegacyResponse = null;
   if (roundInput.frameStep === 1) {
     const cachedResponse = await tryReadCachedRound(roundInput.roundNumber);
     if (cachedResponse) {
-      if (cachedResponse.cacheNeedsUpgrade) {
-        startRoundUpgradeJobIfNeeded(roundInput, checksumSnapshot, demoPathSnapshot);
+      if (!cachedResponse.cacheNeedsUpgrade) {
+        return cachedResponse;
       }
-      return cachedResponse;
+      cachedLegacyResponse = cachedResponse;
     }
   }
 
@@ -991,43 +1320,43 @@ async function handleAnalyzeDemoRound(_event, payload = {}) {
     return buildAnalyzeError(pathError);
   }
 
-  const fastResult = await runParser(
+  const fullResult = await runParser(
     demoPathSnapshot,
     'round',
-    [roundInput.startTick, roundInput.endTick, 0, roundInput.frameStep],
+    [roundInput.startTick, roundInput.endTick, 1, roundInput.frameStep],
   );
-  if (fastResult.status !== 'success') {
+  if (fullResult.status !== 'success') {
     console.error(
-      `[Round Parse] Fast parser failed for round ${roundInput.roundNumber}: ${fastResult.message}`,
-      fastResult.details || {},
+      `[Round Parse] Full parser failed for round ${roundInput.roundNumber}: ${fullResult.message}`,
+      fullResult.details || {},
     );
-    const fullResult = await runParser(
+    const fastResult = await runParser(
       demoPathSnapshot,
       'round',
-      [roundInput.startTick, roundInput.endTick, 1, roundInput.frameStep],
+      [roundInput.startTick, roundInput.endTick, 0, roundInput.frameStep],
     );
-    if (fullResult.status !== 'success') {
+    if (fastResult.status !== 'success') {
       console.error(
-        `[Round Parse] Full parser failed for round ${roundInput.roundNumber}: ${fullResult.message}`,
-        fullResult.details || {},
+        `[Round Parse] Fast parser failed for round ${roundInput.roundNumber}: ${fastResult.message}`,
+        fastResult.details || {},
       );
-      return fullResult;
+      return cachedLegacyResponse || fullResult;
     }
 
     if (roundInput.frameStep === 1) {
-      await persistRoundCacheIfPossible(roundInput, fullResult, checksumSnapshot);
+      await persistRoundCacheIfPossible(roundInput, fastResult, checksumSnapshot);
+      startRoundUpgradeJobIfNeeded(roundInput, checksumSnapshot, demoPathSnapshot);
     }
     const cachedRoundsCount = checksumSnapshot ? await getCachedRoundsCount(checksumSnapshot) : 0;
-    return buildLiveRoundResponse(fullResult, 'live-parser', cachedRoundsCount, false);
+    return buildLiveRoundResponse(fastResult, 'live-parser-fast', cachedRoundsCount, true);
   }
 
   if (roundInput.frameStep === 1) {
-    await persistRoundCacheIfPossible(roundInput, fastResult, checksumSnapshot);
-    startRoundUpgradeJobIfNeeded(roundInput, checksumSnapshot, demoPathSnapshot);
+    await persistRoundCacheIfPossible(roundInput, fullResult, checksumSnapshot);
   }
 
   const cachedRoundsCount = checksumSnapshot ? await getCachedRoundsCount(checksumSnapshot) : 0;
-  return buildLiveRoundResponse(fastResult, 'live-parser-fast', cachedRoundsCount, true);
+  return buildLiveRoundResponse(fullResult, 'live-parser', cachedRoundsCount, false);
 }
 
 async function resolveRoundTickrate() {
@@ -1085,7 +1414,13 @@ function buildFramesFromPlayersByTick(roundInput, playersByTick) {
     frames.push({
       tick,
       players: playersByTick.get(tick) || [],
+      grenades: [],
+      grenade_events: [],
+      bomb_events: [],
       kills: [],
+      shots: [],
+      blinds: [],
+      damages: [],
     });
   }
 
@@ -1093,7 +1428,13 @@ function buildFramesFromPlayersByTick(roundInput, playersByTick) {
     frames.push({
       tick: roundInput.endTick,
       players: playersByTick.get(roundInput.endTick) || [],
+      grenades: [],
+      grenade_events: [],
+      bomb_events: [],
       kills: [],
+      shots: [],
+      blinds: [],
+      damages: [],
     });
   }
 
@@ -1101,20 +1442,61 @@ function buildFramesFromPlayersByTick(roundInput, playersByTick) {
 }
 
 function buildFramesFromParserResponse(roundInput, parserResponse) {
-  const playersByTick = new Map();
+  const framesByTick = new Map();
   const parserFrames = Array.isArray(parserResponse?.frames) ? parserResponse.frames : [];
   for (const frame of parserFrames) {
     const tick = toInteger(frame?.tick, -1);
-    if (tick < 0 || !Array.isArray(frame?.players)) {
+    if (tick < 0) {
       continue;
     }
-    playersByTick.set(tick, frame.players);
+    framesByTick.set(tick, {
+      tick,
+      players: Array.isArray(frame?.players) ? frame.players : [],
+      grenades: Array.isArray(frame?.grenades) ? frame.grenades : [],
+      grenade_events: Array.isArray(frame?.grenade_events) ? frame.grenade_events : [],
+      bomb_events: Array.isArray(frame?.bomb_events) ? frame.bomb_events : [],
+      kills: Array.isArray(frame?.kills) ? frame.kills : [],
+      shots: Array.isArray(frame?.shots) ? frame.shots : [],
+      blinds: Array.isArray(frame?.blinds) ? frame.blinds : [],
+      damages: Array.isArray(frame?.damages) ? frame.damages : [],
+    });
   }
 
-  return buildFramesFromPlayersByTick(roundInput, playersByTick);
+  const frames = [];
+  const step = Math.max(toInteger(roundInput.frameStep, 1), 1);
+  for (let tick = roundInput.startTick; tick <= roundInput.endTick; tick += step) {
+    frames.push(framesByTick.get(tick) || {
+      tick,
+      players: [],
+      grenades: [],
+      grenade_events: [],
+      bomb_events: [],
+      kills: [],
+      shots: [],
+      blinds: [],
+      damages: [],
+    });
+  }
+
+  if (frames.length > 0 && frames[frames.length - 1].tick !== roundInput.endTick) {
+    frames.push(framesByTick.get(roundInput.endTick) || {
+      tick: roundInput.endTick,
+      players: [],
+      grenades: [],
+      grenade_events: [],
+      bomb_events: [],
+      kills: [],
+      shots: [],
+      blinds: [],
+      damages: [],
+    });
+  }
+
+  return frames;
 }
 
 function buildRoundPositionsResponse(roundInput, tickrate, cachedRoundsCount, positions) {
+  void tickrate;
   const playersByTick = buildPlayersByTickMap(positions);
   const frames = buildFramesFromPlayersByTick(roundInput, playersByTick);
   const payload = {
@@ -1123,7 +1505,7 @@ function buildRoundPositionsResponse(roundInput, tickrate, cachedRoundsCount, po
     mode: 'round',
     map: null,
     map_raw: null,
-    tickrate,
+    tickrate: FIXED_TICKRATE,
     round_number: roundInput.roundNumber,
     start_tick: roundInput.startTick,
     end_tick: roundInput.endTick,
@@ -1134,7 +1516,7 @@ function buildRoundPositionsResponse(roundInput, tickrate, cachedRoundsCount, po
     cacheNeedsUpgrade: false,
     positionsCount: Array.isArray(positions) ? positions.length : 0,
   };
-  return normalizeRoundResponseForFixedTickrate(payload, tickrate);
+  return normalizeRoundResponseForFixedTickrate(payload, FIXED_TICKRATE);
 }
 
 async function handleAnalyzeDemoRoundPositions(event, payload = {}) {

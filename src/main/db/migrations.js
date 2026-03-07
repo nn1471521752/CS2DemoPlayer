@@ -92,6 +92,169 @@ const CREATE_PLAYER_POSITIONS_ROUND_INDEX_SQL = `
   ON player_positions (checksum, round_number, tick);
 `;
 
+const CREATE_ROUND_KILLS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS round_kills (
+    checksum TEXT NOT NULL,
+    round_number INTEGER NOT NULL,
+    tick INTEGER NOT NULL,
+    row_index INTEGER NOT NULL,
+    attacker_name TEXT NOT NULL DEFAULT '',
+    victim_name TEXT NOT NULL DEFAULT '',
+    weapon TEXT NOT NULL DEFAULT '',
+    headshot INTEGER NOT NULL DEFAULT 0,
+    assister_name TEXT NOT NULL DEFAULT '',
+    attacker_team_num INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (checksum, round_number, tick, row_index),
+    FOREIGN KEY (checksum) REFERENCES demos(checksum) ON DELETE CASCADE
+  );
+`;
+
+const CREATE_ROUND_KILLS_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_round_kills_checksum_round_tick
+  ON round_kills (checksum, round_number, tick);
+`;
+
+const CREATE_ROUND_SHOTS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS round_shots (
+    checksum TEXT NOT NULL,
+    round_number INTEGER NOT NULL,
+    tick INTEGER NOT NULL,
+    row_index INTEGER NOT NULL,
+    shooter_name TEXT NOT NULL DEFAULT '',
+    shooter_steamid TEXT NOT NULL DEFAULT '',
+    shooter_team_num INTEGER NOT NULL DEFAULT 0,
+    weapon TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (checksum, round_number, tick, row_index),
+    FOREIGN KEY (checksum) REFERENCES demos(checksum) ON DELETE CASCADE
+  );
+`;
+
+const CREATE_ROUND_SHOTS_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_round_shots_checksum_round_tick
+  ON round_shots (checksum, round_number, tick);
+`;
+
+const CREATE_ROUND_BLINDS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS round_blinds (
+    checksum TEXT NOT NULL,
+    round_number INTEGER NOT NULL,
+    tick INTEGER NOT NULL,
+    row_index INTEGER NOT NULL,
+    attacker_name TEXT NOT NULL DEFAULT '',
+    attacker_steamid TEXT NOT NULL DEFAULT '',
+    attacker_team_num INTEGER NOT NULL DEFAULT 0,
+    victim_name TEXT NOT NULL DEFAULT '',
+    victim_steamid TEXT NOT NULL DEFAULT '',
+    victim_team_num INTEGER NOT NULL DEFAULT 0,
+    blind_duration REAL NOT NULL DEFAULT 0,
+    PRIMARY KEY (checksum, round_number, tick, row_index),
+    FOREIGN KEY (checksum) REFERENCES demos(checksum) ON DELETE CASCADE
+  );
+`;
+
+const CREATE_ROUND_BLINDS_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_round_blinds_checksum_round_tick
+  ON round_blinds (checksum, round_number, tick);
+`;
+
+const CREATE_ROUND_DAMAGES_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS round_damages (
+    checksum TEXT NOT NULL,
+    round_number INTEGER NOT NULL,
+    tick INTEGER NOT NULL,
+    row_index INTEGER NOT NULL,
+    attacker_name TEXT NOT NULL DEFAULT '',
+    attacker_steamid TEXT NOT NULL DEFAULT '',
+    attacker_team_num INTEGER NOT NULL DEFAULT 0,
+    victim_name TEXT NOT NULL DEFAULT '',
+    victim_steamid TEXT NOT NULL DEFAULT '',
+    victim_team_num INTEGER NOT NULL DEFAULT 0,
+    weapon TEXT NOT NULL DEFAULT '',
+    hitgroup TEXT NOT NULL DEFAULT '',
+    dmg_health INTEGER NOT NULL DEFAULT 0,
+    dmg_armor INTEGER NOT NULL DEFAULT 0,
+    health INTEGER NOT NULL DEFAULT 0,
+    armor INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (checksum, round_number, tick, row_index),
+    FOREIGN KEY (checksum) REFERENCES demos(checksum) ON DELETE CASCADE
+  );
+`;
+
+const CREATE_ROUND_DAMAGES_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_round_damages_checksum_round_tick
+  ON round_damages (checksum, round_number, tick);
+`;
+
+const CREATE_ROUND_GRENADES_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS round_grenades (
+    checksum TEXT NOT NULL,
+    round_number INTEGER NOT NULL,
+    tick INTEGER NOT NULL,
+    row_index INTEGER NOT NULL,
+    entity_id INTEGER NOT NULL DEFAULT 0,
+    grenade_type TEXT NOT NULL DEFAULT '',
+    x REAL NOT NULL DEFAULT 0,
+    y REAL NOT NULL DEFAULT 0,
+    z REAL NOT NULL DEFAULT 0,
+    thrower_name TEXT NOT NULL DEFAULT '',
+    thrower_steamid TEXT NOT NULL DEFAULT '',
+    thrower_team_num INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (checksum, round_number, tick, row_index),
+    FOREIGN KEY (checksum) REFERENCES demos(checksum) ON DELETE CASCADE
+  );
+`;
+
+const CREATE_ROUND_GRENADES_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_round_grenades_checksum_round_tick
+  ON round_grenades (checksum, round_number, tick);
+`;
+
+const CREATE_ROUND_GRENADE_EVENTS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS round_grenade_events (
+    checksum TEXT NOT NULL,
+    round_number INTEGER NOT NULL,
+    tick INTEGER NOT NULL,
+    row_index INTEGER NOT NULL,
+    event_type TEXT NOT NULL DEFAULT '',
+    grenade_type TEXT NOT NULL DEFAULT '',
+    entity_id INTEGER NOT NULL DEFAULT 0,
+    x REAL NOT NULL DEFAULT 0,
+    y REAL NOT NULL DEFAULT 0,
+    z REAL NOT NULL DEFAULT 0,
+    thrower_name TEXT NOT NULL DEFAULT '',
+    thrower_steamid TEXT NOT NULL DEFAULT '',
+    thrower_team_num INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (checksum, round_number, tick, row_index),
+    FOREIGN KEY (checksum) REFERENCES demos(checksum) ON DELETE CASCADE
+  );
+`;
+
+const CREATE_ROUND_GRENADE_EVENTS_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_round_grenade_events_checksum_round_tick
+  ON round_grenade_events (checksum, round_number, tick);
+`;
+
+const CREATE_ROUND_BOMB_EVENTS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS round_bomb_events (
+    checksum TEXT NOT NULL,
+    round_number INTEGER NOT NULL,
+    tick INTEGER NOT NULL,
+    row_index INTEGER NOT NULL,
+    event_type TEXT NOT NULL DEFAULT '',
+    site INTEGER NOT NULL DEFAULT 0,
+    user_name TEXT NOT NULL DEFAULT '',
+    user_steamid TEXT NOT NULL DEFAULT '',
+    team_num INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (checksum, round_number, tick, row_index),
+    FOREIGN KEY (checksum) REFERENCES demos(checksum) ON DELETE CASCADE
+  );
+`;
+
+const CREATE_ROUND_BOMB_EVENTS_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_round_bomb_events_checksum_round_tick
+  ON round_bomb_events (checksum, round_number, tick);
+`;
+
 const MIGRATION_BATCH = [
   CREATE_DEMOS_TABLE_SQL,
   UPDATE_DISPLAY_NAME_SQL,
@@ -101,6 +264,20 @@ const MIGRATION_BATCH = [
   CREATE_ROUND_FRAMES_INDEX_SQL,
   CREATE_PLAYER_POSITIONS_TABLE_SQL,
   CREATE_PLAYER_POSITIONS_ROUND_INDEX_SQL,
+  CREATE_ROUND_KILLS_TABLE_SQL,
+  CREATE_ROUND_KILLS_INDEX_SQL,
+  CREATE_ROUND_SHOTS_TABLE_SQL,
+  CREATE_ROUND_SHOTS_INDEX_SQL,
+  CREATE_ROUND_BLINDS_TABLE_SQL,
+  CREATE_ROUND_BLINDS_INDEX_SQL,
+  CREATE_ROUND_DAMAGES_TABLE_SQL,
+  CREATE_ROUND_DAMAGES_INDEX_SQL,
+  CREATE_ROUND_GRENADES_TABLE_SQL,
+  CREATE_ROUND_GRENADES_INDEX_SQL,
+  CREATE_ROUND_GRENADE_EVENTS_TABLE_SQL,
+  CREATE_ROUND_GRENADE_EVENTS_INDEX_SQL,
+  CREATE_ROUND_BOMB_EVENTS_TABLE_SQL,
+  CREATE_ROUND_BOMB_EVENTS_INDEX_SQL,
 ];
 
 function runBatch(database, statements) {

@@ -33,6 +33,8 @@ const defaultParseButtonText = btnParseDb ? btnParseDb.innerText : 'Parse & Save
 // --- 2) Map + radar state ---
 const DEFAULT_TICKRATE = 64;
 const PLAYBACK_SPEED = 1;
+const DEFAULT_GAME_ROUND_SECONDS = 115;
+const DEFAULT_BOMB_COUNTDOWN_SECONDS = 40;
 const DEFAULT_MAP_NAME = 'de_mirage';
 const DEFAULT_RADAR_SIZE = 1024;
 const FALLBACK_MAP_META = { pos_x: -3230, pos_y: 1713, scale: 5.0, threshold_z: 0 };
@@ -226,6 +228,9 @@ let isRoundLoading = false;
 let currentTickrate = DEFAULT_TICKRATE;
 let currentRoundStartTick = 0;
 let currentRoundEndTick = 0;
+let currentRoundBombPlantedTick = null;
+let currentRoundBombDefusedTick = null;
+let currentRoundBombExplodedTick = null;
 let currentDemoChecksum = '';
 let currentDemoDisplayName = '';
 let currentDemoPreviouslyImported = false;
@@ -247,6 +252,7 @@ let parseJobProgressState = {
   current: 0,
   total: 0,
   message: 'Idle',
+  elapsedMs: 0,
 };
 
 function clamp(value, min, max) {
@@ -287,6 +293,133 @@ function getRoundDurationSeconds() {
   return (currentRoundEndTick - currentRoundStartTick) / currentTickrate;
 }
 
+function toNullableTick(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  if (typeof value === 'string' && value.trim() === '') {
+    return null;
+  }
+
+  const tick = Number(value);
+  if (!Number.isFinite(tick) || tick < 0) {
+    return null;
+  }
+  return Math.floor(tick);
+}
+
+function extractBombTicksFromFrames(frames) {
+  let plantedTick = null;
+  let defusedTick = null;
+  let explodedTick = null;
+
+  if (!Array.isArray(frames)) {
+    return { plantedTick, defusedTick, explodedTick };
+  }
+
+  for (const frame of frames) {
+    const frameTick = toNullableTick(frame?.tick);
+    const events = Array.isArray(frame?.bomb_events) ? frame.bomb_events : [];
+    for (const event of events) {
+      const eventType = String(event?.event_type || '').trim().toLowerCase();
+      const eventTick = toNullableTick(event?.tick) ?? frameTick;
+      if (eventTick === null) {
+        continue;
+      }
+
+      if (eventType === 'bomb_planted' && plantedTick === null) {
+        plantedTick = eventTick;
+      } else if (eventType === 'bomb_defused' && defusedTick === null) {
+        defusedTick = eventTick;
+      } else if (eventType === 'bomb_exploded' && explodedTick === null) {
+        explodedTick = eventTick;
+      }
+    }
+  }
+
+  return { plantedTick, defusedTick, explodedTick };
+}
+
+function applyRoundBombClockState(round = null, response = null, frames = framesData) {
+  const fromResponse = {
+    plantedTick: toNullableTick(response?.bomb_planted_tick),
+    defusedTick: toNullableTick(response?.bomb_defused_tick),
+    explodedTick: toNullableTick(response?.bomb_exploded_tick),
+  };
+  const fromRound = {
+    plantedTick: toNullableTick(round?.bomb_planted_tick),
+    defusedTick: toNullableTick(round?.bomb_defused_tick),
+    explodedTick: toNullableTick(round?.bomb_exploded_tick),
+  };
+  const fromFrames = extractBombTicksFromFrames(frames);
+
+  const roundStartTick = toNullableTick(currentRoundStartTick) ?? 0;
+  const plantedTickCandidate = fromResponse.plantedTick ?? fromRound.plantedTick ?? fromFrames.plantedTick;
+  const defusedTickCandidate = fromResponse.defusedTick ?? fromRound.defusedTick ?? fromFrames.defusedTick;
+  const explodedTickCandidate = fromResponse.explodedTick ?? fromRound.explodedTick ?? fromFrames.explodedTick;
+
+  currentRoundBombPlantedTick = (
+    plantedTickCandidate !== null && plantedTickCandidate >= roundStartTick
+      ? plantedTickCandidate
+      : null
+  );
+
+  currentRoundBombDefusedTick = (
+    currentRoundBombPlantedTick !== null
+    && defusedTickCandidate !== null
+    && defusedTickCandidate >= currentRoundBombPlantedTick
+      ? defusedTickCandidate
+      : null
+  );
+
+  currentRoundBombExplodedTick = (
+    currentRoundBombPlantedTick !== null
+    && explodedTickCandidate !== null
+    && explodedTickCandidate >= currentRoundBombPlantedTick
+      ? explodedTickCandidate
+      : null
+  );
+}
+
+function resetRoundBombClockState() {
+  currentRoundBombPlantedTick = null;
+  currentRoundBombDefusedTick = null;
+  currentRoundBombExplodedTick = null;
+}
+
+function getRoundClockState(tickValue) {
+  const safeTickrate = coercePositiveNumber(currentTickrate, DEFAULT_TICKRATE);
+  const tick = Number.isFinite(Number(tickValue)) ? Number(tickValue) : currentRoundStartTick;
+  const roundElapsedSeconds = Math.max((tick - currentRoundStartTick) / safeTickrate, 0);
+  const roundRemainingSeconds = Math.max(DEFAULT_GAME_ROUND_SECONDS - roundElapsedSeconds, 0);
+  const plantedTick = toNullableTick(currentRoundBombPlantedTick);
+
+  if (plantedTick === null || tick < plantedTick) {
+    return { phase: 'round', remainingSeconds: roundRemainingSeconds, totalSeconds: DEFAULT_GAME_ROUND_SECONDS };
+  }
+
+  let bombEndTick = plantedTick + Math.round(DEFAULT_BOMB_COUNTDOWN_SECONDS * safeTickrate);
+  const defusedTick = toNullableTick(currentRoundBombDefusedTick);
+  const explodedTick = toNullableTick(currentRoundBombExplodedTick);
+  if (defusedTick !== null && defusedTick >= plantedTick) {
+    bombEndTick = Math.min(bombEndTick, defusedTick);
+  }
+  if (explodedTick !== null && explodedTick >= plantedTick) {
+    bombEndTick = Math.min(bombEndTick, explodedTick);
+  }
+
+  const bombRemainingSeconds = Math.max((bombEndTick - tick) / safeTickrate, 0);
+  return { phase: 'bomb', remainingSeconds: bombRemainingSeconds, totalSeconds: DEFAULT_BOMB_COUNTDOWN_SECONDS };
+}
+
+function formatRoundClockText(clockState) {
+  const phaseLabel = clockState?.phase === 'bomb' ? 'Bomb' : 'Round';
+  const remaining = formatMatchClock(clockState?.remainingSeconds || 0);
+  const total = formatMatchClock(clockState?.totalSeconds || 0);
+  return `${phaseLabel} ${remaining}/${total}`;
+}
+
 function getFrameTick(frameIndex) {
   if (!framesData.length) {
     return currentRoundStartTick;
@@ -322,6 +455,15 @@ function formatTimeLabel(isoText) {
   }
 
   return date.toLocaleString();
+}
+
+function formatElapsedMs(elapsedMs) {
+  const safeMs = Math.max(Number(elapsedMs) || 0, 0);
+  const totalSeconds = Math.floor(safeMs / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  const centiseconds = Math.floor((safeMs % 1000) / 10);
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(centiseconds).padStart(2, '0')}`;
 }
 
 function shortenChecksum(checksum) {
@@ -516,6 +658,7 @@ function renderParseJobProgress() {
   const current = coerceNonNegativeInteger(parseJobProgressState.current, 0);
   const total = coerceNonNegativeInteger(parseJobProgressState.total, 0);
   const baseMessage = String(parseJobProgressState.message || '').trim();
+  const elapsedMs = coerceNonNegativeInteger(parseJobProgressState.elapsedMs, 0);
   const stageTitle = stage === 'done'
     ? 'Parse Complete'
     : (stage === 'error' ? 'Parse Failed' : (stage === 'start' ? 'Parse Started' : 'Parsing'));
@@ -526,6 +669,9 @@ function renderParseJobProgress() {
   }
   if (baseMessage) {
     metaParts.unshift(baseMessage);
+  }
+  if (elapsedMs > 0) {
+    metaParts.push(`Elapsed ${formatElapsedMs(elapsedMs)}`);
   }
 
   parseJobProgressElement.classList.remove('stage-done', 'stage-error');
@@ -549,6 +695,7 @@ function resetParseJobProgress() {
     current: 0,
     total: 0,
     message: 'Idle',
+    elapsedMs: 0,
   };
   renderParseJobProgress();
 }
@@ -561,6 +708,7 @@ function updateParseJobProgress(payload = {}) {
     current: coerceNonNegativeInteger(payload.current, parseJobProgressState.current),
     total: coerceNonNegativeInteger(payload.total, parseJobProgressState.total),
     message: String(payload.message || parseJobProgressState.message || ''),
+    elapsedMs: coerceNonNegativeInteger(payload.elapsedMs, parseJobProgressState.elapsedMs),
   };
   renderParseJobProgress();
   syncParseButtonState();
@@ -593,6 +741,13 @@ function renderDbInfoPanel() {
     <div class="db-row"><span class="db-key">DB rounds</span><span class="db-value">${escapeHtml(String(db.roundsCount ?? 0))}</span></div>
     <div class="db-row"><span class="db-key">DB cached rounds</span><span class="db-value">${escapeHtml(String(db.roundFramesCount ?? 0))}</span></div>
     <div class="db-row"><span class="db-key">DB player positions</span><span class="db-value">${escapeHtml(String(db.playerPositionsCount ?? 0))}</span></div>
+    <div class="db-row"><span class="db-key">DB kills</span><span class="db-value">${escapeHtml(String(db.roundKillsCount ?? 0))}</span></div>
+    <div class="db-row"><span class="db-key">DB shots</span><span class="db-value">${escapeHtml(String(db.roundShotsCount ?? 0))}</span></div>
+    <div class="db-row"><span class="db-key">DB blinds</span><span class="db-value">${escapeHtml(String(db.roundBlindsCount ?? 0))}</span></div>
+    <div class="db-row"><span class="db-key">DB damages</span><span class="db-value">${escapeHtml(String(db.roundDamagesCount ?? 0))}</span></div>
+    <div class="db-row"><span class="db-key">DB grenades</span><span class="db-value">${escapeHtml(String(db.roundGrenadesCount ?? 0))}</span></div>
+    <div class="db-row"><span class="db-key">DB grenade events</span><span class="db-value">${escapeHtml(String(db.roundGrenadeEventsCount ?? 0))}</span></div>
+    <div class="db-row"><span class="db-key">DB bomb events</span><span class="db-value">${escapeHtml(String(db.roundBombEventsCount ?? 0))}</span></div>
     <div class="db-row"><span class="db-key">Parsed demos</span><span class="db-value">${escapeHtml(String(db.parsedDemosCount ?? 0))}</span></div>
     <div class="db-row"><span class="db-key">Last parsed</span><span class="db-value">${escapeHtml(latest ? (latest.displayName || latest.fileName) : '-')}</span></div>
     <div class="db-row"><span class="db-key">Last parse status</span><span class="db-value">${escapeHtml(latest ? formatParseStatus(latest.parseStatus) : '-')}</span></div>
@@ -745,6 +900,7 @@ function resetCurrentDemoState() {
   activeRoundIndex = -1;
   currentRoundStartTick = 0;
   currentRoundEndTick = 0;
+  resetRoundBombClockState();
   currentTickrate = DEFAULT_TICKRATE;
   currentDemoChecksum = '';
   currentDemoDisplayName = '';

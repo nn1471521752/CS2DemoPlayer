@@ -89,6 +89,7 @@ function applyDemoResponseToUi(response) {
   currentTickrate = coercePositiveNumber(response.tickrate, DEFAULT_TICKRATE);
   currentRoundStartTick = 0;
   currentRoundEndTick = 0;
+  resetRoundBombClockState();
   framesData = [];
   roundsData = Array.isArray(response.rounds) ? response.rounds : [];
   currentFrameIndex = 0;
@@ -245,22 +246,25 @@ function setupProgressBar(totalFrames) {
   progressBar.step = '1';
   progressBar.disabled = totalFrames === 0;
 
-  progressText.innerText = totalFrames > 0 ? `00:00/${formatMatchClock(getRoundDurationSeconds())}` : '00:00/00:00';
+  if (totalFrames > 0) {
+    progressText.innerText = formatRoundClockText(getRoundClockState(currentRoundStartTick));
+  } else {
+    progressText.innerText = 'Round 00:00/00:00';
+  }
   syncPlayToggleButtonState();
 }
 
 function updateProgressBar(frameIndex, tickOverride = null) {
   if (!framesData.length) {
     progressBar.value = '0';
-    progressText.innerText = '00:00/00:00';
+    progressText.innerText = 'Round 00:00/00:00';
     return;
   }
 
   const safeIndex = clamp(frameIndex, 0, framesData.length - 1);
   progressBar.value = String(safeIndex);
   const effectiveTick = Number.isFinite(Number(tickOverride)) ? Number(tickOverride) : getFrameTick(safeIndex);
-  const elapsedSeconds = Math.max((effectiveTick - currentRoundStartTick) / currentTickrate, 0);
-  progressText.innerText = `${formatMatchClock(elapsedSeconds)}/${formatMatchClock(getRoundDurationSeconds())}`;
+  progressText.innerText = formatRoundClockText(getRoundClockState(effectiveTick));
 }
 
 function setActiveRound(roundIndex) {
@@ -336,6 +340,7 @@ function applyRoundResponseFrameState(round, response) {
   currentRoundStartTick = Number(round.start_tick) || 0;
   currentRoundEndTick = Number(round.end_tick) || currentRoundStartTick;
   framesData = response.frames || [];
+  applyRoundBombClockState(round, response, framesData);
   currentFrameIndex = 0;
   if (typeof resetHudState === 'function') {
     resetHudState();

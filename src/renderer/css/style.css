@@ -9,7 +9,7 @@ body {
   color: #e5e7eb;
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   min-height: 100vh;
-  padding: 16px;
+  padding: 4px;
 }
 
 .is-hidden {
@@ -22,7 +22,7 @@ body {
   background: #1b2027;
   border: 1px solid #2f3743;
   border-radius: 10px;
-  padding: 14px;
+  padding: 4px;
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.26);
 }
 
@@ -288,9 +288,14 @@ body {
 
 .replay-layout {
   display: grid;
-  grid-template-columns: minmax(760px, 1fr) 360px;
-  gap: 12px;
+  grid-template-columns: max-content minmax(360px, 1fr);
+  gap: 8px;
   align-items: start;
+}
+
+.replay-canvas {
+  width: max-content;
+  justify-self: start;
 }
 
 .team-panel-wrap {
@@ -298,7 +303,7 @@ body {
   border-radius: 10px;
   background: #1b2027;
   min-height: 820px;
-  padding: 10px;
+  padding: 2px;
 }
 
 .team-panel-title {
@@ -318,7 +323,7 @@ body {
 .team-panel-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 2px;
 }
 
 .team-player-slot {
@@ -374,7 +379,7 @@ body {
 
 #radar-canvas {
   display: block;
-  width: 100%;
+  width: auto;
   height: auto;
   background:
     linear-gradient(#1c2531 1px, transparent 1px),
@@ -619,7 +624,7 @@ body {
 
 @media (max-width: 1500px) {
   .replay-layout {
-    grid-template-columns: minmax(680px, 1fr) 320px;
+    grid-template-columns: max-content minmax(320px, 1fr);
   }
 }
 

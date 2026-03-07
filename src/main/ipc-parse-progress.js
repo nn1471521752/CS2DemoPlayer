@@ -9,6 +9,7 @@ function createParseProgressPayload(stage, values = {}) {
     roundNumber: values.roundNumber,
     failedRoundsCount: values.failedRoundsCount,
     message: values.message,
+    elapsedMs: values.elapsedMs,
   };
 }
 

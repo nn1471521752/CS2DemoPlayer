@@ -34,9 +34,10 @@ function beginDbParseUiState() {
     current: 0,
     total: roundsData.length,
     message: 'Starting parser...',
+    elapsedMs: 0,
   });
   syncParseButtonState();
-  setStatus('Parsing all rounds and caching frames into database...', '#f39c12');
+  setStatus('Running single-pass parser and importing CSV into database...', '#f39c12');
 }
 
 function finalizeDbParseProgressOnSuccess() {
@@ -57,19 +58,22 @@ function buildDbParseResultMessage(mapSelection, response) {
   const cacheLabel = `${currentDemoCachedRoundsCount}/${roundsData.length}`;
   const failedRoundsCount = Array.isArray(response.failedRounds) ? response.failedRounds.length : 0;
   const failedRoundsLabel = failedRoundsCount > 0 ? ` Failed rounds: ${failedRoundsCount}.` : '';
+  const elapsedLabel = Number.isFinite(Number(response.parseElapsedMs))
+    ? ` Elapsed: ${formatElapsedMs(response.parseElapsedMs)}.`
+    : '';
   const cacheModeLabel = response.cacheStatus === 'complete' ? 'complete' : 'partial';
   const isPartialCache = response.cacheStatus !== 'complete' || failedRoundsCount > 0;
   const fallbackMapName = mapSelection.normalizedMapName || 'Unknown';
 
   if (mapSelection.usedFallback) {
     return {
-      text: `Saved to DB. Cache ${cacheLabel} (${cacheModeLabel}). Map '${fallbackMapName}' unsupported, fallback to '${mapSelection.selectedMapName}'. Rounds: ${roundsData.length}.${failedRoundsLabel}`,
+      text: `Saved to DB. Cache ${cacheLabel} (${cacheModeLabel}). Map '${fallbackMapName}' unsupported, fallback to '${mapSelection.selectedMapName}'. Rounds: ${roundsData.length}.${failedRoundsLabel}${elapsedLabel}`,
       color: '#f39c12',
     };
   }
 
   return {
-    text: `Saved to DB. Cache ${cacheLabel} (${cacheModeLabel}). Map: ${mapSelection.selectedMapName}. Rounds: ${roundsData.length}.${failedRoundsLabel}`,
+    text: `Saved to DB. Cache ${cacheLabel} (${cacheModeLabel}). Map: ${mapSelection.selectedMapName}. Rounds: ${roundsData.length}.${failedRoundsLabel}${elapsedLabel}`,
     color: isPartialCache ? '#f39c12' : '#2ecc71',
   };
 }
@@ -278,6 +282,15 @@ document.addEventListener('keydown', (event) => {
 
 window.addEventListener('resize', () => {
   hideDemoContextMenu();
+  if (replayView && !replayView.classList.contains('is-hidden') && typeof syncReplayCanvasSize === 'function') {
+    syncReplayCanvasSize(true);
+    if (typeof renderFrameByTick === 'function') {
+      const targetTick = Number.isFinite(currentPlaybackTickRaw)
+        ? currentPlaybackTickRaw
+        : (Number.isFinite(currentPlaybackTick) ? currentPlaybackTick : currentRoundStartTick);
+      renderFrameByTick(targetTick);
+    }
+  }
 });
 
 if (demoList) {
