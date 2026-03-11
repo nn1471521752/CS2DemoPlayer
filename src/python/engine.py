@@ -444,6 +444,19 @@ def resolve_thrower_team_num(row, column_map, tick_value, team_resolver=None):
     return None
 
 
+def tick_matches_range(tick_value, start_tick=None, end_tick=None):
+    if tick_value is None:
+        return False
+
+    if start_tick is not None and tick_value < start_tick:
+        return False
+
+    if end_tick is not None and tick_value > end_tick:
+        return False
+
+    return True
+
+
 def resolve_grenade_columns(columns):
     return {
         "tick": _find_column(columns, ["tick", "Tick"]),
@@ -463,7 +476,7 @@ def has_required_grenade_columns(column_map):
     return all(column_map.get(key) is not None for key in required_keys)
 
 
-def select_grenade_rows(grenades_df, column_map, start_tick, end_tick):
+def select_grenade_rows(grenades_df, column_map, start_tick=None, end_tick=None):
     selected_columns = [
         column_map["tick"],
         column_map["x"],
@@ -480,7 +493,11 @@ def select_grenade_rows(grenades_df, column_map, start_tick, end_tick):
 
     filtered_df = grenades_df[selected_columns]
     tick_column = column_map["tick"]
-    return filtered_df[(filtered_df[tick_column] >= start_tick) & (filtered_df[tick_column] <= end_tick)]
+    if start_tick is not None:
+        filtered_df = filtered_df[filtered_df[tick_column] >= start_tick]
+    if end_tick is not None:
+        filtered_df = filtered_df[filtered_df[tick_column] <= end_tick]
+    return filtered_df
 
 
 def build_grenade_entry(row, column_map, team_resolver=None):
@@ -526,8 +543,7 @@ def attach_thrower_fields(entry, row, column_map, tick_value, team_resolver=None
         entry["thrower_team_num"] = thrower_team_num
 
 
-def build_round_grenades_by_tick(parser, start_tick, end_tick, team_resolver=None):
-    grenades_df = parse_grenades_dataframe(parser)
+def build_grenades_by_tick_from_dataframe(grenades_df, start_tick=None, end_tick=None, team_resolver=None):
     if grenades_df is None:
         return {}
 
@@ -555,6 +571,11 @@ def build_round_grenades_by_tick(parser, start_tick, end_tick, team_resolver=Non
     return grenades_by_tick
 
 
+def build_round_grenades_by_tick(parser, start_tick, end_tick, team_resolver=None):
+    grenades_df = parse_grenades_dataframe(parser)
+    return build_grenades_by_tick_from_dataframe(grenades_df, start_tick, end_tick, team_resolver)
+
+
 def resolve_grenade_event_columns(columns):
     return {
         "tick": _find_column(columns, ["tick", "Tick"]),
@@ -569,7 +590,7 @@ def resolve_grenade_event_columns(columns):
     }
 
 
-def select_grenade_event_rows(events_df, column_map, start_tick, end_tick):
+def select_grenade_event_rows(events_df, column_map, start_tick=None, end_tick=None):
     tick_column = column_map.get("tick")
     if tick_column is None:
         return None
@@ -590,7 +611,11 @@ def select_grenade_event_rows(events_df, column_map, start_tick, end_tick):
             selected_columns.append(column_name)
 
     filtered_df = events_df[selected_columns]
-    return filtered_df[(filtered_df[tick_column] >= start_tick) & (filtered_df[tick_column] <= end_tick)]
+    if start_tick is not None:
+        filtered_df = filtered_df[filtered_df[tick_column] >= start_tick]
+    if end_tick is not None:
+        filtered_df = filtered_df[filtered_df[tick_column] <= end_tick]
+    return filtered_df
 
 
 def build_grenade_event_entry(row, event_type, default_grenade_type, column_map, team_resolver=None):
@@ -643,11 +668,10 @@ def build_grenade_event_entry(row, event_type, default_grenade_type, column_map,
     return tick_value, event_entry
 
 
-def build_round_grenade_events_by_tick(parser, start_tick, end_tick, team_resolver=None):
+def build_grenade_events_by_tick_from_dataframes(event_dataframes, start_tick=None, end_tick=None, team_resolver=None):
     events_by_tick = {}
     seen_event_keys = set()
-    for event_name, event_type, default_grenade_type in GRENADE_EVENT_DEFINITIONS:
-        events_df = parse_event_dataframe(parser, event_name)
+    for event_type, default_grenade_type, events_df in event_dataframes:
         if events_df is None or events_df.empty:
             continue
 
@@ -672,11 +696,31 @@ def build_round_grenade_events_by_tick(parser, start_tick, end_tick, team_resolv
     return events_by_tick
 
 
+def build_round_grenade_events_by_tick(parser, start_tick, end_tick, team_resolver=None):
+    event_dataframes = []
+    for event_name, event_type, default_grenade_type in GRENADE_EVENT_DEFINITIONS:
+        event_dataframes.append(
+            (event_type, default_grenade_type, parse_event_dataframe(parser, event_name))
+        )
+    return build_grenade_events_by_tick_from_dataframes(
+        event_dataframes,
+        start_tick,
+        end_tick,
+        team_resolver,
+    )
+
+
 def build_round_bomb_events_by_tick(parser, start_tick, end_tick):
+    event_dataframes = []
+    for event_name, event_type in BOMB_EVENT_DEFINITIONS:
+        event_dataframes.append((event_type, parse_event_dataframe(parser, event_name)))
+    return build_bomb_events_by_tick_from_dataframes(event_dataframes, start_tick, end_tick)
+
+
+def build_bomb_events_by_tick_from_dataframes(event_dataframes, start_tick=None, end_tick=None):
     events_by_tick = {}
     seen_event_keys = set()
-    for event_name, event_type in BOMB_EVENT_DEFINITIONS:
-        events_df = parse_event_dataframe(parser, event_name)
+    for event_type, events_df in event_dataframes:
         if events_df is None or events_df.empty or "tick" not in list(events_df.columns):
             continue
 
@@ -686,7 +730,10 @@ def build_round_bomb_events_by_tick(parser, start_tick, end_tick):
                 selected_columns.append(optional_column)
 
         filtered_df = events_df[selected_columns]
-        filtered_df = filtered_df[(filtered_df["tick"] >= start_tick) & (filtered_df["tick"] <= end_tick)]
+        if start_tick is not None:
+            filtered_df = filtered_df[filtered_df["tick"] >= start_tick]
+        if end_tick is not None:
+            filtered_df = filtered_df[filtered_df["tick"] <= end_tick]
         if filtered_df.empty:
             continue
 
@@ -727,9 +774,17 @@ def build_round_bomb_events_by_tick(parser, start_tick, end_tick):
     return events_by_tick
 
 
-def parse_tick_dataframe(parser, start_tick, end_tick, tick_step=1):
-    safe_step = max(1, int(tick_step))
-    tick_range = range(start_tick, end_tick + 1, safe_step)
+def parse_tick_dataframe_for_ticks(parser, ticks):
+    safe_ticks = sorted(
+        {
+            int(tick)
+            for tick in ticks
+            if tick is not None and _to_int_or_none(tick) is not None
+        }
+    )
+    if not safe_ticks:
+        raise ValueError("No ticks provided for tick parsing")
+
     tick_prop_sets = [
         [
             "X",
@@ -752,11 +807,17 @@ def parse_tick_dataframe(parser, start_tick, end_tick, tick_step=1):
 
     for tick_props in tick_prop_sets:
         try:
-            return parser.parse_ticks(tick_props, ticks=tick_range)
+            return parser.parse_ticks(tick_props, ticks=safe_ticks)
         except Exception:
             continue
 
     raise RuntimeError("Unable to parse tick data for selected range")
+
+
+def parse_tick_dataframe(parser, start_tick, end_tick, tick_step=1):
+    safe_step = max(1, int(tick_step))
+    tick_range = range(start_tick, end_tick + 1, safe_step)
+    return parse_tick_dataframe_for_ticks(parser, tick_range)
 
 
 def normalize_player_record(player):
@@ -994,6 +1055,24 @@ def parse_player_death_events_dataframe(parser):
     return parse_event_dataframe(parser, "player_death")
 
 
+def build_kills_by_tick_from_dataframe(deaths_df, start_tick=None, end_tick=None):
+    if deaths_df is None or deaths_df.empty:
+        return {}
+
+    kills_by_tick = {}
+    for row in deaths_df.to_dict(orient="records"):
+        parsed_entry = build_kill_entry(row)
+        if parsed_entry is None:
+            continue
+
+        tick_value, kill_entry = parsed_entry
+        if not tick_matches_range(tick_value, start_tick, end_tick):
+            continue
+        kills_by_tick.setdefault(tick_value, []).append(kill_entry)
+
+    return kills_by_tick
+
+
 def build_kill_entry(row):
     tick_value = _to_int_or_none(row.get("tick"))
     if tick_value is None:
@@ -1012,21 +1091,7 @@ def build_kill_entry(row):
 
 def build_round_kills_by_tick(parser, start_tick, end_tick):
     deaths_df = parse_player_death_events_dataframe(parser)
-    if deaths_df is None or deaths_df.empty:
-        return {}
-
-    kills_by_tick = {}
-    for row in deaths_df.to_dict(orient="records"):
-        parsed_entry = build_kill_entry(row)
-        if parsed_entry is None:
-            continue
-
-        tick_value, kill_entry = parsed_entry
-        if tick_value < start_tick or tick_value > end_tick:
-            continue
-        kills_by_tick.setdefault(tick_value, []).append(kill_entry)
-
-    return kills_by_tick
+    return build_kills_by_tick_from_dataframe(deaths_df, start_tick, end_tick)
 
 
 def parse_weapon_fire_events_dataframe(parser):
@@ -1127,6 +1192,10 @@ def build_damage_entry(row):
 
 def build_round_shots_by_tick(parser, start_tick, end_tick):
     shots_df = parse_weapon_fire_events_dataframe(parser)
+    return build_shots_by_tick_from_dataframe(shots_df, start_tick, end_tick)
+
+
+def build_shots_by_tick_from_dataframe(shots_df, start_tick=None, end_tick=None):
     if shots_df is None or shots_df.empty:
         return {}
 
@@ -1137,7 +1206,7 @@ def build_round_shots_by_tick(parser, start_tick, end_tick):
             continue
 
         tick_value, shot_entry = parsed_entry
-        if tick_value < start_tick or tick_value > end_tick:
+        if not tick_matches_range(tick_value, start_tick, end_tick):
             continue
         shots_by_tick.setdefault(tick_value, []).append(shot_entry)
 
@@ -1146,6 +1215,10 @@ def build_round_shots_by_tick(parser, start_tick, end_tick):
 
 def build_round_blinds_by_tick(parser, start_tick, end_tick):
     blinds_df = parse_player_blind_events_dataframe(parser)
+    return build_blinds_by_tick_from_dataframe(blinds_df, start_tick, end_tick)
+
+
+def build_blinds_by_tick_from_dataframe(blinds_df, start_tick=None, end_tick=None):
     if blinds_df is None or blinds_df.empty:
         return {}
 
@@ -1156,7 +1229,7 @@ def build_round_blinds_by_tick(parser, start_tick, end_tick):
             continue
 
         tick_value, blind_entry = parsed_entry
-        if tick_value < start_tick or tick_value > end_tick:
+        if not tick_matches_range(tick_value, start_tick, end_tick):
             continue
         blinds_by_tick.setdefault(tick_value, []).append(blind_entry)
 
@@ -1165,6 +1238,10 @@ def build_round_blinds_by_tick(parser, start_tick, end_tick):
 
 def build_round_damages_by_tick(parser, start_tick, end_tick):
     damages_df = parse_player_hurt_events_dataframe(parser)
+    return build_damages_by_tick_from_dataframe(damages_df, start_tick, end_tick)
+
+
+def build_damages_by_tick_from_dataframe(damages_df, start_tick=None, end_tick=None):
     if damages_df is None or damages_df.empty:
         return {}
 
@@ -1175,7 +1252,7 @@ def build_round_damages_by_tick(parser, start_tick, end_tick):
             continue
 
         tick_value, damage_entry = parsed_entry
-        if tick_value < start_tick or tick_value > end_tick:
+        if not tick_matches_range(tick_value, start_tick, end_tick):
             continue
         damages_by_tick.setdefault(tick_value, []).append(damage_entry)
 
@@ -1437,6 +1514,127 @@ def parse_export_csv_args(argv):
     return include_grenades, output_dir
 
 
+def build_round_fixed_ticks(round_meta, frame_step=1):
+    start_tick = _to_int_or_none(round_meta.get("start_tick")) or 0
+    end_tick = _to_int_or_none(round_meta.get("end_tick")) or start_tick
+    safe_frame_step = max(1, int(frame_step))
+    fixed_ticks = list(range(start_tick, end_tick + 1, safe_frame_step))
+    if not fixed_ticks or fixed_ticks[-1] != end_tick:
+        fixed_ticks.append(end_tick)
+    return fixed_ticks
+
+
+def build_round_raw_ticks(round_meta, source_tickrate, frame_step=1):
+    start_tick = _to_int_or_none(round_meta.get("start_tick")) or 0
+    end_tick = _to_int_or_none(round_meta.get("end_tick")) or start_tick
+    raw_start_tick = _to_int_or_none(round_meta.get("raw_start_tick"))
+    raw_end_tick = _to_int_or_none(round_meta.get("raw_end_tick"))
+    if raw_start_tick is None:
+        raw_start_tick = fixed_tick_to_raw(start_tick, source_tickrate)
+    if raw_end_tick is None:
+        raw_end_tick = fixed_tick_to_raw(end_tick, source_tickrate)
+
+    raw_frame_step = fixed_step_to_raw_step(frame_step, source_tickrate)
+    raw_ticks = list(range(raw_start_tick, raw_end_tick + 1, raw_frame_step))
+    if not raw_ticks or raw_ticks[-1] != raw_end_tick:
+        raw_ticks.append(raw_end_tick)
+    return raw_ticks
+
+
+def collect_export_raw_ticks(rounds, source_tickrate, frame_step=1):
+    raw_ticks = []
+    seen_ticks = set()
+    for round_meta in rounds:
+        for raw_tick in build_round_raw_ticks(round_meta, source_tickrate, frame_step):
+            if raw_tick in seen_ticks:
+                continue
+            seen_ticks.add(raw_tick)
+            raw_ticks.append(raw_tick)
+    raw_ticks.sort()
+    return raw_ticks
+
+
+def slice_tick_map_by_range(tick_map, start_tick, end_tick):
+    if not tick_map:
+        return {}
+
+    sliced = {}
+    for tick_value, entries in tick_map.items():
+        if tick_matches_range(tick_value, start_tick, end_tick):
+            sliced[tick_value] = entries
+    return sliced
+
+
+def build_export_tick_and_event_maps(parser, rounds, source_tickrate, include_grenades):
+    raw_players_by_tick = {}
+    raw_range_start = None
+    raw_range_end = None
+    for round_meta in rounds:
+        round_start_tick = _to_int_or_none(round_meta.get("raw_start_tick"))
+        round_end_tick = _to_int_or_none(round_meta.get("raw_end_tick"))
+        if round_start_tick is None or round_end_tick is None:
+            continue
+        if raw_range_start is None or round_start_tick < raw_range_start:
+            raw_range_start = round_start_tick
+        if raw_range_end is None or round_end_tick > raw_range_end:
+            raw_range_end = round_end_tick
+
+    if raw_range_start is not None and raw_range_end is not None:
+        tick_df = parse_tick_dataframe(
+            parser,
+            raw_range_start,
+            raw_range_end,
+            tick_step=fixed_step_to_raw_step(1, source_tickrate),
+        )
+        players_df = tick_df[tick_df["team_num"].isin([TEAM_NUM_T, TEAM_NUM_CT])]
+        raw_players_by_tick = build_players_by_tick(players_df)
+
+    thrower_team_resolver = build_thrower_team_resolver(raw_players_by_tick)
+
+    kills_by_tick = build_kills_by_tick_from_dataframe(parse_player_death_events_dataframe(parser))
+    shots_by_tick = build_shots_by_tick_from_dataframe(parse_weapon_fire_events_dataframe(parser))
+    blinds_by_tick = build_blinds_by_tick_from_dataframe(parse_player_blind_events_dataframe(parser))
+    damages_by_tick = build_damages_by_tick_from_dataframe(parse_player_hurt_events_dataframe(parser))
+
+    bomb_event_dataframes = []
+    for event_name, event_type in BOMB_EVENT_DEFINITIONS:
+        bomb_event_dataframes.append((event_type, parse_event_dataframe(parser, event_name)))
+    bomb_events_by_tick = build_bomb_events_by_tick_from_dataframes(bomb_event_dataframes)
+
+    grenades_by_tick = {}
+    grenade_events_by_tick = {}
+    if include_grenades:
+        grenades_by_tick = build_grenades_by_tick_from_dataframe(
+            parse_grenades_dataframe(parser),
+            team_resolver=thrower_team_resolver,
+        )
+
+        grenade_event_dataframes = []
+        for event_name, event_type, default_grenade_type in GRENADE_EVENT_DEFINITIONS:
+            grenade_event_dataframes.append(
+                (
+                    event_type,
+                    default_grenade_type,
+                    parse_event_dataframe(parser, event_name),
+                )
+            )
+        grenade_events_by_tick = build_grenade_events_by_tick_from_dataframes(
+            grenade_event_dataframes,
+            team_resolver=thrower_team_resolver,
+        )
+
+    return {
+        "players": raw_players_by_tick,
+        "grenades": grenades_by_tick,
+        "grenade_events": grenade_events_by_tick,
+        "bomb_events": bomb_events_by_tick,
+        "kills": kills_by_tick,
+        "shots": shots_by_tick,
+        "blinds": blinds_by_tick,
+        "damages": damages_by_tick,
+    }
+
+
 def emit_csv_progress(current, total, message):
     try:
         safe_current = max(0, int(current))
@@ -1675,12 +1873,69 @@ def run_export_csv_mode(parser, argv, normalized_map_name, raw_map_name, source_
     }
 
     try:
-        emit_csv_progress(0, total_rounds, "Preparing full demo export")
+        emit_csv_progress(0, total_rounds, "Preparing global tick/event maps")
+        export_maps = build_export_tick_and_event_maps(parser, rounds, source_tickrate, include_grenades)
         for round_index, round_meta in enumerate(rounds):
             round_number = _to_int_or_none(round_meta.get("number")) or (round_index + 1)
             start_tick = _to_int_or_none(round_meta.get("start_tick")) or 0
             end_tick = _to_int_or_none(round_meta.get("end_tick")) or start_tick
-            frames = build_round_frames(parser, start_tick, end_tick, source_tickrate, include_grenades, 1)
+            raw_start_tick = _to_int_or_none(round_meta.get("raw_start_tick"))
+            raw_end_tick = _to_int_or_none(round_meta.get("raw_end_tick"))
+            if raw_start_tick is None:
+                raw_start_tick = fixed_tick_to_raw(start_tick, source_tickrate)
+            if raw_end_tick is None:
+                raw_end_tick = fixed_tick_to_raw(end_tick, source_tickrate)
+
+            players_by_tick = compress_players_by_tick(
+                slice_tick_map_by_range(export_maps["players"], raw_start_tick, raw_end_tick),
+                source_tickrate,
+            )
+            kills_by_tick = compress_kills_by_tick(
+                slice_tick_map_by_range(export_maps["kills"], raw_start_tick, raw_end_tick),
+                source_tickrate,
+            )
+            shots_by_tick = compress_shots_by_tick(
+                slice_tick_map_by_range(export_maps["shots"], raw_start_tick, raw_end_tick),
+                source_tickrate,
+            )
+            blinds_by_tick = compress_blinds_by_tick(
+                slice_tick_map_by_range(export_maps["blinds"], raw_start_tick, raw_end_tick),
+                source_tickrate,
+            )
+            damages_by_tick = compress_damages_by_tick(
+                slice_tick_map_by_range(export_maps["damages"], raw_start_tick, raw_end_tick),
+                source_tickrate,
+            )
+            bomb_events_by_tick = compress_bomb_events_by_tick(
+                slice_tick_map_by_range(export_maps["bomb_events"], raw_start_tick, raw_end_tick),
+                source_tickrate,
+            )
+            grenades_by_tick = {}
+            grenade_events_by_tick = {}
+            if include_grenades:
+                grenades_by_tick = compress_grenades_by_tick(
+                    slice_tick_map_by_range(export_maps["grenades"], raw_start_tick, raw_end_tick),
+                    source_tickrate,
+                )
+                grenade_events_by_tick = compress_grenade_events_by_tick(
+                    slice_tick_map_by_range(export_maps["grenade_events"], raw_start_tick, raw_end_tick),
+                    source_tickrate,
+                )
+
+            frames = build_frames_sequence(
+                start_tick,
+                end_tick,
+                1,
+                players_by_tick,
+                grenades_by_tick,
+                grenade_events_by_tick,
+                bomb_events_by_tick,
+                kills_by_tick,
+                shots_by_tick,
+                blinds_by_tick,
+                damages_by_tick,
+                include_grenades,
+            )
             bomb_ticks = extract_bomb_timing_from_frames(frames)
             round_counts = write_round_frame_rows(round_number, frames, include_grenades, writers)
             for key in round_counts:

@@ -11,6 +11,11 @@ const DISPLAY_TICKRATE = 32;
 const REPLAY_CANVAS_MIN_HEIGHT = 420;
 const REPLAY_CANVAS_SAFE_GUTTER = 12;
 const HUD_PANEL_WIDTH_BY_HEIGHT_RATIO = 0.14;
+const PLAYER_SHOT_EFFECT_WINDOW_SECONDS = 0.18;
+const PLAYER_SHOT_TRACER_WORLD_UNITS = 240;
+const PLAYER_SHOT_MAX_EFFECTS = 10;
+const PLAYER_BLIND_LOOKBACK_SECONDS = 6;
+const PLAYER_BLIND_MIN_DURATION_SECONDS = 0.12;
 
 let currentMapViewport = {
   x: 0,
@@ -760,6 +765,289 @@ function drawGrenadeTrails(renderTick, scaleX, scaleY, unitScale, interpolation 
   }
 }
 
+function normalizeIdentityText(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function buildRenderablePlayerEntries(players, scaleX, scaleY, unitScale) {
+  if (!Array.isArray(players) || players.length === 0) {
+    return [];
+  }
+
+  const playerRadius = 6 * unitScale;
+  return players
+    .filter((player) => isPlayerAliveForRadar(player))
+    .map((player) => ({
+      player,
+      playerRadius,
+      mapped: worldToCanvas(player.X, player.Y, scaleX, scaleY),
+      steamKey: normalizeIdentityText(player?.steamid),
+      nameKey: normalizeIdentityText(player?.name),
+    }));
+}
+
+function buildRenderablePlayerLookup(entries) {
+  const bySteam = new Map();
+  const byName = new Map();
+
+  for (const entry of entries) {
+    if (entry.steamKey && !bySteam.has(entry.steamKey)) {
+      bySteam.set(entry.steamKey, entry);
+    }
+    if (entry.nameKey && !byName.has(entry.nameKey)) {
+      byName.set(entry.nameKey, entry);
+    }
+  }
+
+  return { bySteam, byName };
+}
+
+function resolveRenderablePlayerEntry(lookup, steamidLike, nameLike) {
+  if (!lookup) {
+    return null;
+  }
+
+  const steamKey = normalizeIdentityText(steamidLike);
+  if (steamKey && lookup.bySteam.has(steamKey)) {
+    return lookup.bySteam.get(steamKey);
+  }
+
+  const nameKey = normalizeIdentityText(nameLike);
+  if (nameKey && lookup.byName.has(nameKey)) {
+    return lookup.byName.get(nameKey);
+  }
+
+  return null;
+}
+
+function collectRecentShotEvents(renderTick) {
+  if (!Array.isArray(framesData) || framesData.length === 0) {
+    return [];
+  }
+
+  const safeTickrate = Math.max(currentTickrate, 1);
+  const lookbackTicks = Math.max(1, Math.ceil(safeTickrate * PLAYER_SHOT_EFFECT_WINDOW_SECONDS));
+  const minTick = renderTick - lookbackTicks;
+  const startFrameIndex = findFrameIndexByTick(renderTick);
+  const shots = [];
+
+  for (let frameIndex = startFrameIndex; frameIndex >= 0; frameIndex -= 1) {
+    const frameTick = getFrameTick(frameIndex);
+    if (frameTick < minTick) {
+      break;
+    }
+
+    const frameShots = framesData[frameIndex]?.shots;
+    if (!Array.isArray(frameShots) || frameShots.length === 0) {
+      continue;
+    }
+
+    for (const shot of frameShots) {
+      const eventTick = Number.isFinite(Number(shot?.tick)) ? Number(shot.tick) : frameTick;
+      if (eventTick < minTick || eventTick > renderTick) {
+        continue;
+      }
+
+      shots.push({
+        ...shot,
+        tick: eventTick,
+      });
+    }
+  }
+
+  shots.sort((left, right) => right.tick - left.tick);
+  return shots.slice(0, PLAYER_SHOT_MAX_EFFECTS);
+}
+
+function getBlindEffectKey(blind) {
+  const steamKey = normalizeIdentityText(blind?.victim_steamid);
+  if (steamKey) {
+    return `steam:${steamKey}`;
+  }
+
+  const nameKey = normalizeIdentityText(blind?.victim_name);
+  if (nameKey) {
+    return `name:${nameKey}`;
+  }
+
+  return '';
+}
+
+function collectActiveBlindEffects(renderTick) {
+  if (!Array.isArray(framesData) || framesData.length === 0) {
+    return new Map();
+  }
+
+  const safeTickrate = Math.max(currentTickrate, 1);
+  const lookbackTicks = Math.max(1, Math.ceil(safeTickrate * PLAYER_BLIND_LOOKBACK_SECONDS));
+  const minTick = renderTick - lookbackTicks;
+  const startFrameIndex = findFrameIndexByTick(renderTick);
+  const strongestByVictim = new Map();
+
+  for (let frameIndex = startFrameIndex; frameIndex >= 0; frameIndex -= 1) {
+    const frameTick = getFrameTick(frameIndex);
+    if (frameTick < minTick) {
+      break;
+    }
+
+    const frameBlinds = framesData[frameIndex]?.blinds;
+    if (!Array.isArray(frameBlinds) || frameBlinds.length === 0) {
+      continue;
+    }
+
+    for (const blind of frameBlinds) {
+      const eventTick = Number.isFinite(Number(blind?.tick)) ? Number(blind.tick) : frameTick;
+      const durationSeconds = Math.max(Number(blind?.blind_duration) || 0, 0);
+      const safeDurationSeconds = Math.max(durationSeconds, PLAYER_BLIND_MIN_DURATION_SECONDS);
+      const durationTicks = safeDurationSeconds * safeTickrate;
+      if (eventTick > renderTick || renderTick > (eventTick + durationTicks)) {
+        continue;
+      }
+
+      const effectKey = getBlindEffectKey(blind);
+      if (!effectKey) {
+        continue;
+      }
+
+      const progress = clamp((renderTick - eventTick) / Math.max(durationTicks, 0.0001), 0, 1);
+      const intensity = clamp(1 - progress, 0.18, 1);
+      const existing = strongestByVictim.get(effectKey);
+      if (!existing || intensity > existing.intensity) {
+        strongestByVictim.set(effectKey, {
+          ...blind,
+          tick: eventTick,
+          intensity,
+          progress,
+        });
+      }
+    }
+  }
+
+  return strongestByVictim;
+}
+
+function drawPlayerBlindEffects(entries, renderTick, unitScale) {
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return;
+  }
+
+  const activeBlinds = collectActiveBlindEffects(renderTick);
+  if (activeBlinds.size === 0) {
+    return;
+  }
+
+  const lookup = buildRenderablePlayerLookup(entries);
+  for (const blind of activeBlinds.values()) {
+    const entry = resolveRenderablePlayerEntry(lookup, blind?.victim_steamid, blind?.victim_name);
+    if (!entry) {
+      continue;
+    }
+
+    const intensity = clamp(Number(blind.intensity) || 0, 0.18, 1);
+    const baseRadius = entry.playerRadius + Math.max(4, 4 * unitScale);
+    const glowRadius = baseRadius * (1.5 + (0.35 * intensity));
+    const coreRadius = baseRadius * (0.72 + (0.16 * intensity));
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'screen';
+    ctx.beginPath();
+    ctx.arc(entry.mapped.x, entry.mapped.y, glowRadius, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(255, 246, 179, ${0.12 + (0.2 * intensity)})`;
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(entry.mapped.x, entry.mapped.y, coreRadius, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(255, 255, 255, ${0.1 + (0.14 * intensity)})`;
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(entry.mapped.x, entry.mapped.y, glowRadius, 0, Math.PI * 2);
+    ctx.lineWidth = Math.max(1, 1.2 * unitScale);
+    ctx.strokeStyle = `rgba(255, 238, 128, ${0.5 + (0.28 * intensity)})`;
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+function drawPlayerShotEffect(entry, shot, renderTick, scaleX, scaleY, unitScale) {
+  if (!entry || !shot) {
+    return;
+  }
+
+  const safeTickrate = Math.max(currentTickrate, 1);
+  const eventTick = Number(shot.tick);
+  if (!Number.isFinite(eventTick)) {
+    return;
+  }
+
+  const elapsedTicks = Math.max(renderTick - eventTick, 0);
+  const lifeTicks = Math.max(PLAYER_SHOT_EFFECT_WINDOW_SECONDS * safeTickrate, 0.0001);
+  if (elapsedTicks > lifeTicks) {
+    return;
+  }
+
+  const fade = clamp(1 - (elapsedTicks / lifeTicks), 0, 1);
+  const heading = (Number(entry.player?.yaw) || 0) * (Math.PI / 180);
+  const dirX = Math.cos(heading);
+  const dirY = -Math.sin(heading);
+  const muzzleOffset = entry.playerRadius + Math.max(3, 2.4 * unitScale);
+  const muzzleX = entry.mapped.x + (dirX * muzzleOffset);
+  const muzzleY = entry.mapped.y + (dirY * muzzleOffset);
+  const tracerLength = worldRadiusToCanvasRadius(PLAYER_SHOT_TRACER_WORLD_UNITS, scaleX, scaleY) * (0.82 + (0.22 * fade));
+  const tracerX = muzzleX + (dirX * tracerLength);
+  const tracerY = muzzleY + (dirY * tracerLength);
+  const teamColor = getPlayerTeamColor(entry.player);
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'screen';
+  ctx.strokeStyle = hexToRgba(teamColor, 0.5 + (0.35 * fade));
+  ctx.lineWidth = Math.max(1.2, 1.4 * unitScale);
+  ctx.beginPath();
+  ctx.moveTo(muzzleX, muzzleY);
+  ctx.lineTo(tracerX, tracerY);
+  ctx.stroke();
+
+  ctx.strokeStyle = `rgba(255, 255, 255, ${0.5 + (0.4 * fade)})`;
+  ctx.lineWidth = Math.max(0.8, 0.8 * unitScale);
+  ctx.beginPath();
+  ctx.moveTo(muzzleX, muzzleY);
+  ctx.lineTo(
+    muzzleX + (dirX * tracerLength * 0.58),
+    muzzleY + (dirY * tracerLength * 0.58),
+  );
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(muzzleX, muzzleY, Math.max(2.2, 2.6 * unitScale) + (1.4 * fade), 0, Math.PI * 2);
+  ctx.fillStyle = `rgba(255, 214, 102, ${0.6 + (0.25 * fade)})`;
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.arc(muzzleX, muzzleY, Math.max(1.2, 1.4 * unitScale), 0, Math.PI * 2);
+  ctx.fillStyle = `rgba(255, 255, 255, ${0.72 + (0.18 * fade)})`;
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawPlayerShotEffects(entries, renderTick, scaleX, scaleY, unitScale) {
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return;
+  }
+
+  const shots = collectRecentShotEvents(renderTick);
+  if (shots.length === 0) {
+    return;
+  }
+
+  const lookup = buildRenderablePlayerLookup(entries);
+  for (const shot of shots) {
+    const entry = resolveRenderablePlayerEntry(lookup, shot?.shooter_steamid, shot?.shooter_name);
+    if (!entry) {
+      continue;
+    }
+
+    drawPlayerShotEffect(entry, shot, renderTick, scaleX, scaleY, unitScale);
+  }
+}
+
 function getCanvasScale() {
   const radarSize = currentRadarSize > 0 ? currentRadarSize : DEFAULT_RADAR_SIZE;
   const scaleX = currentMapViewport.width / radarSize;
@@ -1115,12 +1403,14 @@ function drawPlayerWeaponLabel(player, mapped, unitScale, playerRadius, badgeLay
   ctx.restore();
 }
 
-function drawPlayer(player, scaleX, scaleY, unitScale) {
-  const playerRadius = 6 * unitScale;
-  const mapped = worldToCanvas(player.X, player.Y, scaleX, scaleY);
-  drawPlayerBodyAndView(player, mapped, unitScale, playerRadius);
-  const badgeLayout = drawPlayerIdBadge(player, mapped, unitScale, playerRadius);
-  drawPlayerWeaponLabel(player, mapped, unitScale, playerRadius, badgeLayout);
+function drawPlayerEntry(entry, unitScale) {
+  if (!entry) {
+    return;
+  }
+
+  drawPlayerBodyAndView(entry.player, entry.mapped, unitScale, entry.playerRadius);
+  const badgeLayout = drawPlayerIdBadge(entry.player, entry.mapped, unitScale, entry.playerRadius);
+  drawPlayerWeaponLabel(entry.player, entry.mapped, unitScale, entry.playerRadius, badgeLayout);
 }
 
 function isPlayerAliveForRadar(player) {
@@ -1281,12 +1571,14 @@ function renderFrame(players, frameIndex = 0, renderTick = null, grenadeInterpol
   ctx.rect(currentMapViewport.x, currentMapViewport.y, currentMapViewport.width, currentMapViewport.height);
   ctx.clip();
   const grenadeFrameIndex = Number.isFinite(Number(renderTick)) ? Number(renderTick) : frameIndex;
+  const renderTickValue = Number.isFinite(Number(renderTick)) ? Number(renderTick) : getFrameTick(frameIndex);
+  const playerEntries = buildRenderablePlayerEntries(safePlayers, scaleX, scaleY, unitScale);
   drawGrenadeTrails(grenadeFrameIndex, scaleX, scaleY, unitScale, grenadeInterpolation);
-  safePlayers.forEach((player) => {
-    if (isPlayerAliveForRadar(player)) {
-      drawPlayer(player, scaleX, scaleY, unitScale);
-    }
+  drawPlayerBlindEffects(playerEntries, renderTickValue, unitScale);
+  playerEntries.forEach((entry) => {
+    drawPlayerEntry(entry, unitScale);
   });
+  drawPlayerShotEffects(playerEntries, renderTickValue, scaleX, scaleY, unitScale);
   ctx.restore();
 
   drawCanvasHud(safePlayers, frameIndex, layout, unitScale, renderTick);

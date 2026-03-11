@@ -24,6 +24,7 @@ const {
   saveRoundDataFromCsv,
   getRoundFrames,
   getRoundPlayerPositions,
+  getRoundBombEvents,
   getCachedRoundsCount,
   getDebugInfo,
 } = require('./db');
@@ -1495,7 +1496,33 @@ function buildFramesFromParserResponse(roundInput, parserResponse) {
   return frames;
 }
 
-function buildRoundPositionsResponse(roundInput, tickrate, cachedRoundsCount, positions) {
+function buildBombTickPayloadFromEvents(bombEvents = []) {
+  const payload = {
+    bomb_planted_tick: null,
+    bomb_defused_tick: null,
+    bomb_exploded_tick: null,
+  };
+
+  for (const event of bombEvents) {
+    const eventType = String(event?.event_type || '').trim().toLowerCase();
+    const eventTick = normalizeOptionalTick(event?.tick);
+    if (eventTick === null) {
+      continue;
+    }
+
+    if (eventType === 'bomb_planted' && payload.bomb_planted_tick === null) {
+      payload.bomb_planted_tick = eventTick;
+    } else if (eventType === 'bomb_defused' && payload.bomb_defused_tick === null) {
+      payload.bomb_defused_tick = eventTick;
+    } else if (eventType === 'bomb_exploded' && payload.bomb_exploded_tick === null) {
+      payload.bomb_exploded_tick = eventTick;
+    }
+  }
+
+  return payload;
+}
+
+function buildRoundPositionsResponse(roundInput, tickrate, cachedRoundsCount, positions, bombEvents = []) {
   void tickrate;
   const playersByTick = buildPlayersByTickMap(positions);
   const frames = buildFramesFromPlayersByTick(roundInput, playersByTick);
@@ -1515,6 +1542,7 @@ function buildRoundPositionsResponse(roundInput, tickrate, cachedRoundsCount, po
     hasGrenades: false,
     cacheNeedsUpgrade: false,
     positionsCount: Array.isArray(positions) ? positions.length : 0,
+    ...buildBombTickPayloadFromEvents(bombEvents),
   };
   return normalizeRoundResponseForFixedTickrate(payload, FIXED_TICKRATE);
 }
@@ -1571,6 +1599,9 @@ async function handleAnalyzeDemoRoundPositions(event, payload = {}) {
         hasGrenades: false,
         cacheNeedsUpgrade: false,
         positionsCount: 0,
+        bomb_planted_tick: parseResult.bomb_planted_tick ?? null,
+        bomb_defused_tick: parseResult.bomb_defused_tick ?? null,
+        bomb_exploded_tick: parseResult.bomb_exploded_tick ?? null,
       };
       return normalizeRoundResponseForFixedTickrate(payload, parseResult.tickrate);
     }
@@ -1578,7 +1609,8 @@ async function handleAnalyzeDemoRoundPositions(event, payload = {}) {
 
   const tickrate = await resolveRoundTickrate();
   const cachedRoundsCount = await getCachedRoundsCount(checksumSnapshot);
-  return buildRoundPositionsResponse(roundInput, tickrate, cachedRoundsCount, positions);
+  const bombEvents = await getRoundBombEvents(checksumSnapshot, roundInput.roundNumber);
+  return buildRoundPositionsResponse(roundInput, tickrate, cachedRoundsCount, positions, bombEvents);
 }
 
 ipcMain.handle('analyze-demo', handleAnalyzeDemo);

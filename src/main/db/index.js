@@ -1747,6 +1747,35 @@ async function getRoundPlayerPositions(checksum, roundNumber) {
   return rows.map(mapPlayerPositionRow);
 }
 
+async function getRoundBombEvents(checksum, roundNumber) {
+  const database = await getDatabase();
+  const rows = getAll(
+    database,
+    `
+      SELECT
+        tick,
+        event_type,
+        site,
+        user_name,
+        user_steamid,
+        team_num
+      FROM round_bomb_events
+      WHERE checksum = ? AND round_number = ?
+      ORDER BY tick ASC, row_index ASC
+    `,
+    [checksum, toNumber(roundNumber)],
+  );
+
+  return rows.map((row) => ({
+    tick: toSafeInteger(row.tick, 0),
+    event_type: String(row.event_type || ''),
+    site: toSafeInteger(row.site, 0),
+    user_name: String(row.user_name || ''),
+    user_steamid: String(row.user_steamid || ''),
+    team_num: toSafeInteger(row.team_num, 0),
+  }));
+}
+
 async function getCachedRoundsCount(checksum) {
   const database = await getDatabase();
   return toNumber(
@@ -1778,6 +1807,7 @@ module.exports = {
   saveRoundDataFromCsv,
   getRoundFrames,
   getRoundPlayerPositions,
+  getRoundBombEvents,
   getCachedRoundsCount,
   getDebugInfo,
   databaseFilePath,
