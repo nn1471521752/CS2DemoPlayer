@@ -34,6 +34,35 @@ CSV_GRENADES_FILE = "grenades.csv"
 CSV_GRENADE_EVENTS_FILE = "grenade_events.csv"
 CSV_BOMB_EVENTS_FILE = "bomb_events.csv"
 CSV_ROUND_META_FILE = "round_meta.csv"
+CSV_CLOCK_STATES_FILE = "clock_states.csv"
+
+DEFAULT_GAME_ROUND_SECONDS = 115.0
+DEFAULT_BOMB_COUNTDOWN_SECONDS = 40.0
+DEFAULT_TIMEOUT_COUNTDOWN_SECONDS = 30.0
+
+ROUND_CLOCK_LABELS = {
+    "round": "Round",
+    "bomb": "Bomb",
+    "timeout_t": "T Timeout",
+    "timeout_ct": "CT Timeout",
+    "technical_pause": "Tech Pause",
+    "pause": "Paused",
+    "freeze": "Freeze",
+}
+
+ROUND_CLOCK_PROPS = [
+    "CCSGameRulesProxy.CCSGameRules.m_bFreezePeriod",
+    "CCSGameRulesProxy.CCSGameRules.m_bGamePaused",
+    "CCSGameRulesProxy.CCSGameRules.m_bCTTimeOutActive",
+    "CCSGameRulesProxy.CCSGameRules.m_bTerroristTimeOutActive",
+    "CCSGameRulesProxy.CCSGameRules.m_bTechnicalTimeOut",
+    "CCSGameRulesProxy.CCSGameRules.m_bMatchWaitingForResume",
+    "CCSGameRulesProxy.CCSGameRules.m_bBombPlanted",
+    "CCSGameRulesProxy.CCSGameRules.m_iRoundTime",
+    "CCSGameRulesProxy.CCSGameRules.m_iFreezeTime",
+    "CCSGameRulesProxy.CCSGameRules.m_flCTTimeOutRemaining",
+    "CCSGameRulesProxy.CCSGameRules.m_flTerroristTimeOutRemaining",
+]
 
 
 def normalize_map_name(raw_map_name):
@@ -324,6 +353,242 @@ def _to_string_or_default(value, default=""):
         return default
 
     return str(parsed_number)
+
+
+def _to_bool(value):
+    if isinstance(value, bool):
+        return value
+    if value in (None, ""):
+        return False
+
+    try:
+        return int(value) != 0
+    except Exception:
+        pass
+
+    normalized = str(value).strip().lower()
+    if normalized in ("true", "yes", "y"):
+        return True
+    if normalized in ("false", "no", "n"):
+        return False
+    return bool(value)
+
+
+def _to_non_negative_seconds(value, fallback=0.0):
+    number = _to_float_or_none(value)
+    if number is None or number < 0:
+        return float(fallback)
+    return float(number)
+
+
+def build_round_clock_label(phase):
+    return ROUND_CLOCK_LABELS.get(phase, ROUND_CLOCK_LABELS["round"])
+
+
+def parse_round_clock_dataframe(parser, raw_ticks):
+    safe_ticks = sorted(
+        {
+            int(tick)
+            for tick in raw_ticks
+            if tick is not None and _to_int_or_none(tick) is not None
+        }
+    )
+    if not safe_ticks:
+        return None
+
+    try:
+        return parser.parse_ticks(ROUND_CLOCK_PROPS, ticks=safe_ticks)
+    except Exception:
+        return None
+
+
+def build_round_clock_rules_by_tick(clock_df, source_tickrate):
+    if clock_df is None or clock_df.empty:
+        return {}
+
+    rules_by_tick = {}
+    for row in clock_df.to_dict(orient="records"):
+        raw_tick = _to_int_or_none(row.get("tick"))
+        if raw_tick is None:
+            continue
+
+        fixed_tick = raw_tick_to_fixed(raw_tick, source_tickrate)
+        if fixed_tick in rules_by_tick:
+            continue
+
+        rules_by_tick[fixed_tick] = {
+            "freeze_period": _to_bool(row.get("CCSGameRulesProxy.CCSGameRules.m_bFreezePeriod")),
+            "game_paused": _to_bool(row.get("CCSGameRulesProxy.CCSGameRules.m_bGamePaused")),
+            "ct_timeout_active": _to_bool(row.get("CCSGameRulesProxy.CCSGameRules.m_bCTTimeOutActive")),
+            "t_timeout_active": _to_bool(row.get("CCSGameRulesProxy.CCSGameRules.m_bTerroristTimeOutActive")),
+            "technical_timeout": _to_bool(row.get("CCSGameRulesProxy.CCSGameRules.m_bTechnicalTimeOut")),
+            "waiting_for_resume": _to_bool(row.get("CCSGameRulesProxy.CCSGameRules.m_bMatchWaitingForResume")),
+            "bomb_planted": _to_bool(row.get("CCSGameRulesProxy.CCSGameRules.m_bBombPlanted")),
+            "round_time_seconds": _to_non_negative_seconds(
+                row.get("CCSGameRulesProxy.CCSGameRules.m_iRoundTime"),
+                DEFAULT_GAME_ROUND_SECONDS,
+            ),
+            "freeze_time_seconds": _to_non_negative_seconds(
+                row.get("CCSGameRulesProxy.CCSGameRules.m_iFreezeTime"),
+                0.0,
+            ),
+            "ct_timeout_remaining_seconds": _to_non_negative_seconds(
+                row.get("CCSGameRulesProxy.CCSGameRules.m_flCTTimeOutRemaining"),
+                0.0,
+            ),
+            "t_timeout_remaining_seconds": _to_non_negative_seconds(
+                row.get("CCSGameRulesProxy.CCSGameRules.m_flTerroristTimeOutRemaining"),
+                0.0,
+            ),
+        }
+
+    return rules_by_tick
+
+
+def build_round_clock_state_entry(phase, remaining_seconds, total_seconds, is_paused):
+    return {
+        "phase": str(phase or "round"),
+        "label": build_round_clock_label(phase),
+        "remaining_seconds": round(max(float(remaining_seconds or 0.0), 0.0), 3),
+        "total_seconds": round(max(float(total_seconds or 0.0), 0.0), 3),
+        "is_paused": bool(is_paused),
+    }
+
+
+def build_round_clock_states(
+    parser,
+    start_tick,
+    end_tick,
+    source_tickrate,
+    bomb_planted_tick=None,
+    bomb_defused_tick=None,
+    bomb_exploded_tick=None,
+    frame_step=1,
+):
+    fixed_ticks = []
+    safe_frame_step = max(1, int(frame_step))
+    for tick_value in range(int(start_tick), int(end_tick) + 1, safe_frame_step):
+        fixed_ticks.append(int(tick_value))
+    if not fixed_ticks or fixed_ticks[-1] != int(end_tick):
+        fixed_ticks.append(int(end_tick))
+
+    raw_ticks = [fixed_tick_to_raw(tick_value, source_tickrate) for tick_value in fixed_ticks]
+    rules_by_tick = build_round_clock_rules_by_tick(
+        parse_round_clock_dataframe(parser, raw_ticks),
+        source_tickrate,
+    )
+
+    states_by_tick = {}
+    previous_tick = None
+    previous_pause_active = False
+    previous_bomb_active = False
+    previous_pause_phase = None
+    round_elapsed_seconds = 0.0
+    bomb_elapsed_seconds = 0.0
+    ct_timeout_total_seconds = DEFAULT_TIMEOUT_COUNTDOWN_SECONDS
+    t_timeout_total_seconds = DEFAULT_TIMEOUT_COUNTDOWN_SECONDS
+
+    planted_tick = _to_int_or_none(bomb_planted_tick)
+    defused_tick = _to_int_or_none(bomb_defused_tick)
+    exploded_tick = _to_int_or_none(bomb_exploded_tick)
+
+    for tick_value in fixed_ticks:
+        if previous_tick is not None:
+            elapsed_ticks = max(int(tick_value) - int(previous_tick), 0)
+            elapsed_seconds = float(elapsed_ticks) / FIXED_TICKRATE
+            if not previous_pause_active:
+                if previous_bomb_active:
+                    bomb_elapsed_seconds += elapsed_seconds
+                else:
+                    round_elapsed_seconds += elapsed_seconds
+
+        rules = rules_by_tick.get(int(tick_value), {})
+        round_total_seconds = _to_non_negative_seconds(
+            rules.get("round_time_seconds"),
+            DEFAULT_GAME_ROUND_SECONDS,
+        )
+        ct_timeout_remaining_seconds = _to_non_negative_seconds(
+            rules.get("ct_timeout_remaining_seconds"),
+            0.0,
+        )
+        t_timeout_remaining_seconds = _to_non_negative_seconds(
+            rules.get("t_timeout_remaining_seconds"),
+            0.0,
+        )
+        if rules.get("ct_timeout_active") and ct_timeout_remaining_seconds > 0:
+            ct_timeout_total_seconds = max(ct_timeout_total_seconds, ct_timeout_remaining_seconds)
+        if rules.get("t_timeout_active") and t_timeout_remaining_seconds > 0:
+            t_timeout_total_seconds = max(t_timeout_total_seconds, t_timeout_remaining_seconds)
+        if planted_tick is None and rules.get("bomb_planted"):
+            planted_tick = int(tick_value)
+
+        bomb_resolved = (
+            (defused_tick is not None and int(tick_value) >= defused_tick)
+            or (exploded_tick is not None and int(tick_value) >= exploded_tick)
+        )
+        bomb_visible = planted_tick is not None and int(tick_value) >= planted_tick
+        bomb_active = bomb_visible and not bomb_resolved
+
+        if bomb_visible:
+            base_phase = "bomb"
+            base_total_seconds = DEFAULT_BOMB_COUNTDOWN_SECONDS
+            base_remaining_seconds = 0.0 if bomb_resolved else max(
+                DEFAULT_BOMB_COUNTDOWN_SECONDS - bomb_elapsed_seconds,
+                0.0,
+            )
+        elif rules.get("freeze_period") and int(tick_value) <= int(start_tick):
+            base_phase = "freeze"
+            freeze_total_seconds = _to_non_negative_seconds(rules.get("freeze_time_seconds"), 0.0)
+            base_total_seconds = freeze_total_seconds
+            base_remaining_seconds = freeze_total_seconds
+        else:
+            base_phase = "round"
+            base_total_seconds = round_total_seconds
+            base_remaining_seconds = max(round_total_seconds - round_elapsed_seconds, 0.0)
+
+        pause_phase = None
+        remaining_seconds = base_remaining_seconds
+        total_seconds = base_total_seconds
+        if rules.get("ct_timeout_active"):
+            pause_phase = "timeout_ct"
+            previous_pause_phase = pause_phase
+            remaining_seconds = ct_timeout_remaining_seconds
+            total_seconds = max(ct_timeout_total_seconds, ct_timeout_remaining_seconds)
+        elif rules.get("t_timeout_active"):
+            pause_phase = "timeout_t"
+            previous_pause_phase = pause_phase
+            remaining_seconds = t_timeout_remaining_seconds
+            total_seconds = max(t_timeout_total_seconds, t_timeout_remaining_seconds)
+        elif rules.get("technical_timeout"):
+            pause_phase = "technical_pause"
+            previous_pause_phase = pause_phase
+        elif rules.get("game_paused"):
+            pause_phase = "pause"
+            previous_pause_phase = pause_phase
+        elif rules.get("waiting_for_resume"):
+            pause_phase = previous_pause_phase or "pause"
+            if pause_phase == "timeout_ct":
+                remaining_seconds = ct_timeout_remaining_seconds
+                total_seconds = max(ct_timeout_total_seconds, remaining_seconds)
+            elif pause_phase == "timeout_t":
+                remaining_seconds = t_timeout_remaining_seconds
+                total_seconds = max(t_timeout_total_seconds, remaining_seconds)
+        else:
+            previous_pause_phase = None
+
+        phase = pause_phase or base_phase
+        states_by_tick[int(tick_value)] = build_round_clock_state_entry(
+            phase,
+            remaining_seconds,
+            total_seconds,
+            pause_phase is not None,
+        )
+
+        previous_tick = int(tick_value)
+        previous_pause_active = pause_phase is not None
+        previous_bomb_active = bomb_active
+
+    return states_by_tick
 
 
 def _sanitize_json_value(value):
@@ -1018,6 +1283,7 @@ def build_frames_sequence(
     blinds_by_tick,
     damages_by_tick,
     include_grenades,
+    clock_states_by_tick=None,
 ):
     frames = []
     safe_frame_step = max(1, int(frame_step))
@@ -1031,6 +1297,8 @@ def build_frames_sequence(
         frame["shots"] = shots_by_tick.get(int(tick), [])
         frame["blinds"] = blinds_by_tick.get(int(tick), [])
         frame["damages"] = damages_by_tick.get(int(tick), [])
+        if clock_states_by_tick and int(tick) in clock_states_by_tick:
+            frame["clock"] = clock_states_by_tick[int(tick)]
         frames.append(frame)
 
     if frames and frames[-1]["tick"] != end_tick:
@@ -1043,10 +1311,29 @@ def build_frames_sequence(
             "blinds": blinds_by_tick.get(int(end_tick), []),
             "damages": damages_by_tick.get(int(end_tick), []),
         }
+        if clock_states_by_tick and int(end_tick) in clock_states_by_tick:
+            frame["clock"] = clock_states_by_tick[int(end_tick)]
         if include_grenades:
             frame["grenades"] = grenades_by_tick.get(int(end_tick), [])
             frame["grenade_events"] = grenade_events_by_tick.get(int(end_tick), [])
         frames.append(frame)
+
+    return frames
+
+
+def attach_clock_states_to_frames(frames, clock_states_by_tick):
+    if not isinstance(clock_states_by_tick, dict) or not clock_states_by_tick:
+        return frames
+
+    for frame in frames:
+        if not isinstance(frame, dict):
+            continue
+        tick_value = _to_int_or_none(frame.get("tick"))
+        if tick_value is None:
+            continue
+        clock_state = clock_states_by_tick.get(int(tick_value))
+        if clock_state is not None:
+            frame["clock"] = clock_state
 
     return frames
 
@@ -1300,6 +1587,21 @@ def build_round_frames(parser, start_tick, end_tick, source_tickrate, include_gr
     damages_by_tick = compress_damages_by_tick(raw_damages_by_tick, source_tickrate)
     raw_bomb_events_by_tick = build_round_bomb_events_by_tick(parser, raw_start_tick, raw_end_tick)
     bomb_events_by_tick = compress_bomb_events_by_tick(raw_bomb_events_by_tick, source_tickrate)
+    bomb_planted_tick, bomb_defused_tick, bomb_exploded_tick = extract_bomb_timing_from_tick_map(
+        bomb_events_by_tick,
+        start_tick,
+        end_tick,
+    )
+    clock_states_by_tick = build_round_clock_states(
+        parser,
+        start_tick,
+        end_tick,
+        source_tickrate,
+        bomb_planted_tick=bomb_planted_tick,
+        bomb_defused_tick=bomb_defused_tick,
+        bomb_exploded_tick=bomb_exploded_tick,
+        frame_step=frame_step,
+    )
 
     return build_frames_sequence(
         start_tick,
@@ -1314,6 +1616,7 @@ def build_round_frames(parser, start_tick, end_tick, source_tickrate, include_gr
         blinds_by_tick,
         damages_by_tick,
         include_grenades,
+        clock_states_by_tick=clock_states_by_tick,
     )
 
 
@@ -1332,6 +1635,7 @@ def csv_paths_for_output(output_dir):
         "grenade_events": os.path.join(output_dir, CSV_GRENADE_EVENTS_FILE),
         "bomb_events": os.path.join(output_dir, CSV_BOMB_EVENTS_FILE),
         "round_meta": os.path.join(output_dir, CSV_ROUND_META_FILE),
+        "clock_states": os.path.join(output_dir, CSV_CLOCK_STATES_FILE),
     }
 
 
@@ -1462,6 +1766,18 @@ def create_export_csv_writers(csv_paths):
             "team_num",
         ],
     )
+    writers["clock_states_file"], writers["clock_states"] = create_csv_writer(
+        csv_paths["clock_states"],
+        [
+            "round_number",
+            "tick",
+            "phase",
+            "label",
+            "remaining_seconds",
+            "total_seconds",
+            "is_paused",
+        ],
+    )
     writers["round_meta_file"], writers["round_meta"] = create_csv_writer(
         csv_paths["round_meta"],
         [
@@ -1489,6 +1805,7 @@ def close_export_csv_writers(writers):
         "grenades_file",
         "grenade_events_file",
         "bomb_events_file",
+        "clock_states_file",
         "round_meta_file",
     ]:
         csv_file = writers.get(key)
@@ -1689,6 +2006,7 @@ def write_round_frame_rows(round_number, frames, include_grenades, writers):
         "grenades": 0,
         "grenade_events": 0,
         "bomb_events": 0,
+        "clock_states": 0,
     }
     dedupe_players = set()
 
@@ -1786,6 +2104,21 @@ def write_round_frame_rows(round_number, frames, include_grenades, writers):
             )
             counts["bomb_events"] += 1
 
+        clock_state = frame.get("clock") if isinstance(frame, dict) else None
+        if isinstance(clock_state, dict):
+            writers["clock_states"].writerow(
+                {
+                    "round_number": int(round_number),
+                    "tick": int(tick_value),
+                    "phase": _to_string_or_default(clock_state.get("phase"), "round"),
+                    "label": _to_string_or_default(clock_state.get("label"), build_round_clock_label("round")),
+                    "remaining_seconds": _to_non_negative_seconds(clock_state.get("remaining_seconds"), 0.0),
+                    "total_seconds": _to_non_negative_seconds(clock_state.get("total_seconds"), 0.0),
+                    "is_paused": csv_bool(clock_state.get("is_paused")),
+                }
+            )
+            counts["clock_states"] += 1
+
         if not include_grenades:
             continue
 
@@ -1869,6 +2202,7 @@ def run_export_csv_mode(parser, argv, normalized_map_name, raw_map_name, source_
         "grenades": 0,
         "grenade_events": 0,
         "bomb_events": 0,
+        "clock_states": 0,
         "round_meta": 0,
     }
 
@@ -1937,6 +2271,17 @@ def run_export_csv_mode(parser, argv, normalized_map_name, raw_map_name, source_
                 include_grenades,
             )
             bomb_ticks = extract_bomb_timing_from_frames(frames)
+            clock_states_by_tick = build_round_clock_states(
+                parser,
+                start_tick,
+                end_tick,
+                source_tickrate,
+                bomb_planted_tick=bomb_ticks[0],
+                bomb_defused_tick=bomb_ticks[1],
+                bomb_exploded_tick=bomb_ticks[2],
+                frame_step=1,
+            )
+            attach_clock_states_to_frames(frames, clock_states_by_tick)
             round_counts = write_round_frame_rows(round_number, frames, include_grenades, writers)
             for key in round_counts:
                 row_counts[key] += round_counts[key]
@@ -2002,6 +2347,26 @@ def parse_round_args(argv):
         raise ValueError("Invalid round range: end_tick < start_tick")
 
     return start_tick, end_tick, include_grenades, frame_step
+
+
+def extract_bomb_timing_from_tick_map(events_by_tick, start_tick=None, end_tick=None):
+    if not isinstance(events_by_tick, dict) or not events_by_tick:
+        return None, None, None
+
+    frames = []
+    for tick_value in sorted(events_by_tick.keys()):
+        if start_tick is not None and tick_value < start_tick:
+            continue
+        if end_tick is not None and tick_value > end_tick:
+            continue
+        frames.append(
+            {
+                "tick": int(tick_value),
+                "bomb_events": events_by_tick.get(tick_value) or [],
+            }
+        )
+
+    return extract_bomb_timing_from_frames(frames)
 
 
 def extract_bomb_timing_from_frames(frames):

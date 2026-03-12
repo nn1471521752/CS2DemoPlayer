@@ -1,4 +1,4 @@
-﻿const { ipcRenderer } = require('electron');
+const { ipcRenderer } = require('electron');
 const { CS2_MAP_META } = require('./js/map-meta');
 
 // --- 1) DOM ---
@@ -231,6 +231,8 @@ let currentRoundEndTick = 0;
 let currentRoundBombPlantedTick = null;
 let currentRoundBombDefusedTick = null;
 let currentRoundBombExplodedTick = null;
+let currentRoundClockStatesByTick = new Map();
+let currentRoundClockTicks = [];
 let currentDemoChecksum = '';
 let currentDemoDisplayName = '';
 let currentDemoPreviouslyImported = false;
@@ -388,7 +390,109 @@ function resetRoundBombClockState() {
   currentRoundBombExplodedTick = null;
 }
 
+function normalizeParsedClockState(clockState) {
+  if (!clockState || typeof clockState !== 'object') {
+    return null;
+  }
+
+  const remainingSeconds = Math.max(Number(clockState.remaining_seconds ?? clockState.remainingSeconds) || 0, 0);
+  const totalSeconds = Math.max(Number(clockState.total_seconds ?? clockState.totalSeconds) || 0, 0);
+  return {
+    phase: String(clockState.phase || 'round'),
+    label: String(clockState.label || (clockState.phase === 'bomb' ? 'Bomb' : 'Round')),
+    remainingSeconds,
+    totalSeconds,
+    isPaused: Boolean(clockState.is_paused ?? clockState.isPaused),
+  };
+}
+
+function applyParsedRoundClockStates(frames = framesData) {
+  currentRoundClockStatesByTick = new Map();
+  currentRoundClockTicks = [];
+
+  if (!Array.isArray(frames)) {
+    return;
+  }
+
+  for (const frame of frames) {
+    const tick = toNullableTick(frame?.tick);
+    const parsedClockState = normalizeParsedClockState(frame?.clock);
+    if (tick === null || !parsedClockState || currentRoundClockStatesByTick.has(tick)) {
+      continue;
+    }
+    currentRoundClockStatesByTick.set(tick, parsedClockState);
+    currentRoundClockTicks.push(tick);
+  }
+}
+
+function resetParsedRoundClockStates() {
+  currentRoundClockStatesByTick = new Map();
+  currentRoundClockTicks = [];
+}
+
+function getParsedRoundClockState(tickValue) {
+  if (!(currentRoundClockStatesByTick instanceof Map) || currentRoundClockStatesByTick.size === 0) {
+    return null;
+  }
+
+  const targetTick = Number.isFinite(Number(tickValue)) ? Number(tickValue) : currentRoundStartTick;
+  if (currentRoundClockStatesByTick.has(targetTick)) {
+    return currentRoundClockStatesByTick.get(targetTick);
+  }
+
+  if (!Array.isArray(currentRoundClockTicks) || currentRoundClockTicks.length === 0) {
+    return null;
+  }
+
+  let lowerBoundIndex = 0;
+  let upperBoundIndex = currentRoundClockTicks.length - 1;
+  let resolvedTick = null;
+  while (lowerBoundIndex <= upperBoundIndex) {
+    const middleIndex = Math.floor((lowerBoundIndex + upperBoundIndex) / 2);
+    const middleTick = currentRoundClockTicks[middleIndex];
+    if (middleTick === targetTick) {
+      resolvedTick = middleTick;
+      break;
+    }
+    if (middleTick < targetTick) {
+      resolvedTick = middleTick;
+      lowerBoundIndex = middleIndex + 1;
+    } else {
+      upperBoundIndex = middleIndex - 1;
+    }
+  }
+
+  if (resolvedTick === null) {
+    resolvedTick = currentRoundClockTicks[0];
+  }
+
+  const baseState = currentRoundClockStatesByTick.get(resolvedTick);
+  if (!baseState) {
+    return null;
+  }
+
+  if (
+    resolvedTick >= targetTick
+    || baseState.isPaused
+    || !['round', 'bomb', 'freeze'].includes(baseState.phase)
+  ) {
+    return baseState;
+  }
+
+  const safeTickrate = coercePositiveNumber(currentTickrate, DEFAULT_TICKRATE);
+  const deltaSeconds = Math.max((targetTick - resolvedTick) / safeTickrate, 0);
+  return {
+    ...baseState,
+    remainingSeconds: Math.max(baseState.remainingSeconds - deltaSeconds, 0),
+  };
+}
+
 function getRoundClockState(tickValue) {
+  const parsedClockState = getParsedRoundClockState(tickValue);
+  if (parsedClockState) {
+    return parsedClockState;
+  }
+
   const safeTickrate = coercePositiveNumber(currentTickrate, DEFAULT_TICKRATE);
   const tick = Number.isFinite(Number(tickValue)) ? Number(tickValue) : currentRoundStartTick;
   const roundElapsedSeconds = Math.max((tick - currentRoundStartTick) / safeTickrate, 0);
@@ -399,22 +503,23 @@ function getRoundClockState(tickValue) {
     return { phase: 'round', remainingSeconds: roundRemainingSeconds, totalSeconds: DEFAULT_GAME_ROUND_SECONDS };
   }
 
-  let bombEndTick = plantedTick + Math.round(DEFAULT_BOMB_COUNTDOWN_SECONDS * safeTickrate);
+  const bombCountdownEndTick = plantedTick + Math.round(DEFAULT_BOMB_COUNTDOWN_SECONDS * safeTickrate);
   const defusedTick = toNullableTick(currentRoundBombDefusedTick);
   const explodedTick = toNullableTick(currentRoundBombExplodedTick);
-  if (defusedTick !== null && defusedTick >= plantedTick) {
-    bombEndTick = Math.min(bombEndTick, defusedTick);
-  }
-  if (explodedTick !== null && explodedTick >= plantedTick) {
-    bombEndTick = Math.min(bombEndTick, explodedTick);
+  const bombStopped = (
+    (defusedTick !== null && defusedTick >= plantedTick && tick >= defusedTick)
+    || (explodedTick !== null && explodedTick >= plantedTick && tick >= explodedTick)
+  );
+  if (bombStopped) {
+    return { phase: 'bomb', remainingSeconds: 0, totalSeconds: DEFAULT_BOMB_COUNTDOWN_SECONDS };
   }
 
-  const bombRemainingSeconds = Math.max((bombEndTick - tick) / safeTickrate, 0);
+  const bombRemainingSeconds = Math.max((bombCountdownEndTick - tick) / safeTickrate, 0);
   return { phase: 'bomb', remainingSeconds: bombRemainingSeconds, totalSeconds: DEFAULT_BOMB_COUNTDOWN_SECONDS };
 }
 
 function formatRoundClockText(clockState) {
-  const phaseLabel = clockState?.phase === 'bomb' ? 'Bomb' : 'Round';
+  const phaseLabel = String(clockState?.label || (clockState?.phase === 'bomb' ? 'Bomb' : 'Round'));
   const remaining = formatMatchClock(clockState?.remainingSeconds || 0);
   const total = formatMatchClock(clockState?.totalSeconds || 0);
   return `${phaseLabel} ${remaining}/${total}`;
@@ -901,6 +1006,7 @@ function resetCurrentDemoState() {
   currentRoundStartTick = 0;
   currentRoundEndTick = 0;
   resetRoundBombClockState();
+  resetParsedRoundClockStates();
   currentTickrate = DEFAULT_TICKRATE;
   currentDemoChecksum = '';
   currentDemoDisplayName = '';

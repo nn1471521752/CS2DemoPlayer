@@ -9,3 +9,8 @@ script = ""
 name = "运行"
 icon = "run"
 command = "npm start"
+
+[[actions]]
+name = "复制github"
+icon = "tool"
+command = "git remote get-url origin | clip"

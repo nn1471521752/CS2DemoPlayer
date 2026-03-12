@@ -25,6 +25,7 @@ const {
   getRoundFrames,
   getRoundPlayerPositions,
   getRoundBombEvents,
+  getRoundClockStates,
   getCachedRoundsCount,
   getDebugInfo,
 } = require('./db');
@@ -181,6 +182,15 @@ function normalizeFrameForFixedTickrate(frame, sourceTickrate) {
     blinds: normalizeTickedEventsForFixedTickrate(frame?.blinds, sourceTickrate, fixedTick),
     damages: normalizeTickedEventsForFixedTickrate(frame?.damages, sourceTickrate, fixedTick),
   };
+  if (frame?.clock && typeof frame.clock === 'object') {
+    normalizedFrame.clock = {
+      phase: String(frame.clock.phase || 'round'),
+      label: String(frame.clock.label || 'Round'),
+      remaining_seconds: Number(frame.clock.remaining_seconds) || 0,
+      total_seconds: Number(frame.clock.total_seconds) || 0,
+      is_paused: Boolean(frame.clock.is_paused),
+    };
+  }
 
   if (Object.prototype.hasOwnProperty.call(frame || {}, 'grenades')) {
     normalizedFrame.grenades = Array.isArray(frame?.grenades) ? frame.grenades : [];
@@ -224,6 +234,9 @@ function normalizeFramesForFixedTickrate(frames, sourceTickrate) {
         ...(Array.isArray(existing.bomb_events) ? existing.bomb_events : []),
         ...normalizedFrame.bomb_events,
       ];
+    }
+    if (Object.prototype.hasOwnProperty.call(normalizedFrame, 'clock') && normalizedFrame.clock) {
+      existing.clock = normalizedFrame.clock;
     }
     existing.kills = [...existing.kills, ...normalizedFrame.kills];
     existing.shots = [
@@ -553,6 +566,7 @@ function buildCsvFilesForImport(parserResult = {}) {
     grenades: String(csvFiles.grenades || fromDir('grenades.csv')),
     grenade_events: String(csvFiles.grenade_events || csvFiles.grenadeEvents || fromDir('grenade_events.csv')),
     bomb_events: String(csvFiles.bomb_events || csvFiles.bombEvents || fromDir('bomb_events.csv')),
+    clock_states: String(csvFiles.clock_states || csvFiles.clockStates || fromDir('clock_states.csv')),
   };
 }
 
@@ -1182,7 +1196,7 @@ function validateRoundRange(payload = {}) {
   return { startTick: Math.floor(startTick), endTick: Math.floor(endTick), roundNumber, frameStep };
 }
 
-function buildCachedRoundResponse(cachedRound, cachedRoundsCount, roundNumber) {
+function buildCachedRoundResponse(cachedRound, cachedRoundsCount, roundNumber, bombEvents = []) {
   const hasGrenades = Boolean(cachedRound.hasGrenades) || hasGrenadesInFrameCache(cachedRound.frames);
   const hasGrenadeEvents = hasGrenadeEventsInFrameCache(cachedRound.frames);
   const hasBombEvents = hasBombEventsInFrameCache(cachedRound.frames);
@@ -1203,10 +1217,10 @@ function buildCachedRoundResponse(cachedRound, cachedRoundsCount, roundNumber) {
     cachedRoundsCount,
     hasGrenades: hasFullGrenadeData,
     cacheNeedsUpgrade: !hasFullRoundData,
+    ...buildBombTickPayloadFromEvents(bombEvents),
   };
   return normalizeRoundResponseForFixedTickrate(payload, cachedRound.tickrate);
 }
-
 async function tryReadCachedRound(roundNumber) {
   if (!selectedDemoChecksum || roundNumber <= 0) {
     return null;
@@ -1219,7 +1233,8 @@ async function tryReadCachedRound(roundNumber) {
     }
 
     const cachedRoundsCount = await getCachedRoundsCount(selectedDemoChecksum);
-    return buildCachedRoundResponse(cachedRound, cachedRoundsCount, roundNumber);
+    const bombEvents = await getRoundBombEvents(selectedDemoChecksum, roundNumber);
+    return buildCachedRoundResponse(cachedRound, cachedRoundsCount, roundNumber, bombEvents);
   } catch (error) {
     console.warn(`[Round Cache] Read failed for round ${roundNumber}: ${error.message}`);
     return null;
@@ -1408,6 +1423,39 @@ function buildPlayersByTickMap(positions) {
   return playersByTick;
 }
 
+function attachClockStatesToFrames(frames, clockStates = []) {
+  if (!Array.isArray(frames) || frames.length === 0 || !Array.isArray(clockStates) || clockStates.length === 0) {
+    return Array.isArray(frames) ? frames : [];
+  }
+
+  const clockByTick = new Map();
+  for (const clockState of clockStates) {
+    const tick = toInteger(clockState?.tick, -1);
+    if (tick < 0 || clockByTick.has(tick)) {
+      continue;
+    }
+    clockByTick.set(tick, {
+      phase: String(clockState.phase || 'round'),
+      label: String(clockState.label || 'Round'),
+      remaining_seconds: Number(clockState.remaining_seconds) || 0,
+      total_seconds: Number(clockState.total_seconds) || 0,
+      is_paused: Boolean(clockState.is_paused),
+    });
+  }
+
+  return frames.map((frame) => {
+    if (!frame || typeof frame !== 'object') {
+      return frame;
+    }
+    const tick = toInteger(frame.tick, -1);
+    if (tick < 0) {
+      return frame;
+    }
+    const clock = clockByTick.get(tick);
+    return clock ? { ...frame, clock } : frame;
+  });
+}
+
 function buildFramesFromPlayersByTick(roundInput, playersByTick) {
   const frames = [];
   const step = Math.max(toInteger(roundInput.frameStep, 1), 1);
@@ -1460,6 +1508,7 @@ function buildFramesFromParserResponse(roundInput, parserResponse) {
       shots: Array.isArray(frame?.shots) ? frame.shots : [],
       blinds: Array.isArray(frame?.blinds) ? frame.blinds : [],
       damages: Array.isArray(frame?.damages) ? frame.damages : [],
+      clock: frame?.clock && typeof frame.clock === 'object' ? frame.clock : undefined,
     });
   }
 
@@ -1476,6 +1525,7 @@ function buildFramesFromParserResponse(roundInput, parserResponse) {
       shots: [],
       blinds: [],
       damages: [],
+      clock: undefined,
     });
   }
 
@@ -1490,6 +1540,7 @@ function buildFramesFromParserResponse(roundInput, parserResponse) {
       shots: [],
       blinds: [],
       damages: [],
+      clock: undefined,
     });
   }
 
@@ -1522,10 +1573,13 @@ function buildBombTickPayloadFromEvents(bombEvents = []) {
   return payload;
 }
 
-function buildRoundPositionsResponse(roundInput, tickrate, cachedRoundsCount, positions, bombEvents = []) {
+function buildRoundPositionsResponse(roundInput, tickrate, cachedRoundsCount, positions, bombEvents = [], clockStates = []) {
   void tickrate;
   const playersByTick = buildPlayersByTickMap(positions);
-  const frames = buildFramesFromPlayersByTick(roundInput, playersByTick);
+  const frames = attachClockStatesToFrames(
+    buildFramesFromPlayersByTick(roundInput, playersByTick),
+    clockStates,
+  );
   const payload = {
     status: 'success',
     source: 'player-positions-table',
@@ -1610,7 +1664,15 @@ async function handleAnalyzeDemoRoundPositions(event, payload = {}) {
   const tickrate = await resolveRoundTickrate();
   const cachedRoundsCount = await getCachedRoundsCount(checksumSnapshot);
   const bombEvents = await getRoundBombEvents(checksumSnapshot, roundInput.roundNumber);
-  return buildRoundPositionsResponse(roundInput, tickrate, cachedRoundsCount, positions, bombEvents);
+  const clockStates = await getRoundClockStates(checksumSnapshot, roundInput.roundNumber);
+  return buildRoundPositionsResponse(
+    roundInput,
+    tickrate,
+    cachedRoundsCount,
+    positions,
+    bombEvents,
+    clockStates,
+  );
 }
 
 ipcMain.handle('analyze-demo', handleAnalyzeDemo);

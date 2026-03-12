@@ -255,6 +255,26 @@ const CREATE_ROUND_BOMB_EVENTS_INDEX_SQL = `
   ON round_bomb_events (checksum, round_number, tick);
 `;
 
+const CREATE_ROUND_CLOCK_STATES_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS round_clock_states (
+    checksum TEXT NOT NULL,
+    round_number INTEGER NOT NULL,
+    tick INTEGER NOT NULL,
+    phase TEXT NOT NULL DEFAULT 'round',
+    label TEXT NOT NULL DEFAULT 'Round',
+    remaining_seconds REAL NOT NULL DEFAULT 0,
+    total_seconds REAL NOT NULL DEFAULT 0,
+    is_paused INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (checksum, round_number, tick),
+    FOREIGN KEY (checksum) REFERENCES demos(checksum) ON DELETE CASCADE
+  );
+`;
+
+const CREATE_ROUND_CLOCK_STATES_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_round_clock_states_checksum_round_tick
+  ON round_clock_states (checksum, round_number, tick);
+`;
+
 const MIGRATION_BATCH = [
   CREATE_DEMOS_TABLE_SQL,
   UPDATE_DISPLAY_NAME_SQL,
@@ -278,6 +298,8 @@ const MIGRATION_BATCH = [
   CREATE_ROUND_GRENADE_EVENTS_INDEX_SQL,
   CREATE_ROUND_BOMB_EVENTS_TABLE_SQL,
   CREATE_ROUND_BOMB_EVENTS_INDEX_SQL,
+  CREATE_ROUND_CLOCK_STATES_TABLE_SQL,
+  CREATE_ROUND_CLOCK_STATES_INDEX_SQL,
 ];
 
 function runBatch(database, statements) {

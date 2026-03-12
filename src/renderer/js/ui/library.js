@@ -90,6 +90,7 @@ function applyDemoResponseToUi(response) {
   currentRoundStartTick = 0;
   currentRoundEndTick = 0;
   resetRoundBombClockState();
+  resetParsedRoundClockStates();
   framesData = [];
   roundsData = Array.isArray(response.rounds) ? response.rounds : [];
   currentFrameIndex = 0;
@@ -340,6 +341,7 @@ function applyRoundResponseFrameState(round, response) {
   currentRoundStartTick = Number(round.start_tick) || 0;
   currentRoundEndTick = Number(round.end_tick) || currentRoundStartTick;
   framesData = response.frames || [];
+  applyParsedRoundClockStates(framesData);
   applyRoundBombClockState(round, response, framesData);
   currentFrameIndex = 0;
   if (typeof resetHudState === 'function') {

@@ -11,6 +11,7 @@
     roundGrenadesCount: toNumber(getScalar(database, 'SELECT COUNT(*) FROM round_grenades')),
     roundGrenadeEventsCount: toNumber(getScalar(database, 'SELECT COUNT(*) FROM round_grenade_events')),
     roundBombEventsCount: toNumber(getScalar(database, 'SELECT COUNT(*) FROM round_bomb_events')),
+    roundClockStatesCount: toNumber(getScalar(database, 'SELECT COUNT(*) FROM round_clock_states')),
     parsedDemosCount: toNumber(getScalar(database, 'SELECT COUNT(*) FROM demos WHERE is_parsed = 1')),
   };
 }

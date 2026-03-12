@@ -335,6 +335,53 @@ function mapRoundFrameRow(row) {
   };
 }
 
+function mapRoundClockStateRow(row) {
+  return {
+    tick: toNumber(row.tick),
+    phase: String(row.phase || 'round'),
+    label: String(row.label || 'Round'),
+    remaining_seconds: toNumber(row.remaining_seconds),
+    total_seconds: toNumber(row.total_seconds),
+    is_paused: toBoolean(row.is_paused),
+  };
+}
+
+function attachClockStatesToFrames(frames, clockStates) {
+  if (!Array.isArray(frames) || frames.length === 0 || !Array.isArray(clockStates) || clockStates.length === 0) {
+    return Array.isArray(frames) ? frames : [];
+  }
+
+  const clockByTick = new Map();
+  for (const entry of clockStates) {
+    const tick = toSafeInteger(entry?.tick, -1);
+    if (tick < 0 || clockByTick.has(tick)) {
+      continue;
+    }
+    clockByTick.set(tick, {
+      phase: String(entry.phase || 'round'),
+      label: String(entry.label || 'Round'),
+      remaining_seconds: toFiniteFloat(entry.remaining_seconds, 0),
+      total_seconds: toFiniteFloat(entry.total_seconds, 0),
+      is_paused: Boolean(entry.is_paused),
+    });
+  }
+
+  return frames.map((frame) => {
+    if (!frame || typeof frame !== 'object') {
+      return frame;
+    }
+    const tick = toSafeInteger(frame.tick, -1);
+    if (tick < 0) {
+      return frame;
+    }
+    const clock = clockByTick.get(tick);
+    if (!clock) {
+      return frame;
+    }
+    return { ...frame, clock };
+  });
+}
+
 function mapPlayerPositionRow(row) {
   return {
     tick: toNumber(row.tick),
@@ -987,6 +1034,26 @@ const INSERT_ROUND_BOMB_EVENT_SQL = `
   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 `;
 
+const INSERT_ROUND_CLOCK_STATE_SQL = `
+  INSERT INTO round_clock_states (
+    checksum,
+    round_number,
+    tick,
+    phase,
+    label,
+    remaining_seconds,
+    total_seconds,
+    is_paused
+  )
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  ON CONFLICT(checksum, round_number, tick) DO UPDATE SET
+    phase = excluded.phase,
+    label = excluded.label,
+    remaining_seconds = excluded.remaining_seconds,
+    total_seconds = excluded.total_seconds,
+    is_paused = excluded.is_paused
+`;
+
 function clearRoundDerivedTables(database, checksum) {
   const statements = [
     'DELETE FROM round_frames WHERE checksum = ?',
@@ -998,6 +1065,7 @@ function clearRoundDerivedTables(database, checksum) {
     'DELETE FROM round_grenades WHERE checksum = ?',
     'DELETE FROM round_grenade_events WHERE checksum = ?',
     'DELETE FROM round_bomb_events WHERE checksum = ?',
+    'DELETE FROM round_clock_states WHERE checksum = ?',
   ];
 
   for (const statement of statements) {
@@ -1262,6 +1330,28 @@ async function importRoundBombEventsCsv(database, checksum, csvFiles) {
   return count;
 }
 
+async function importRoundClockStatesCsv(database, checksum, csvFiles) {
+  const insertStatement = database.prepare(INSERT_ROUND_CLOCK_STATE_SQL);
+  let count = 0;
+  try {
+    count = await readCsvRows(csvFiles.clock_states, async (row) => {
+      insertStatement.run([
+        checksum,
+        toSafeInteger(row.round_number, 0),
+        toSafeInteger(row.tick, 0),
+        String(row.phase || 'round'),
+        String(row.label || 'Round'),
+        toFiniteFloat(row.remaining_seconds, 0),
+        toFiniteFloat(row.total_seconds, 0),
+        toSafeInteger(row.is_paused, 0) > 0 ? 1 : 0,
+      ]);
+    });
+  } finally {
+    insertStatement.free();
+  }
+  return count;
+}
+
 function normalizeCsvFilePaths(csvFiles = {}) {
   return {
     round_meta: String(csvFiles.round_meta || ''),
@@ -1273,6 +1363,7 @@ function normalizeCsvFilePaths(csvFiles = {}) {
     grenades: String(csvFiles.grenades || ''),
     grenade_events: String(csvFiles.grenade_events || ''),
     bomb_events: String(csvFiles.bomb_events || ''),
+    clock_states: String(csvFiles.clock_states || ''),
   };
 }
 
@@ -1302,6 +1393,7 @@ async function saveRoundDataFromCsv(checksum, csvFiles, options = {}) {
     counts.grenades = await importRoundGrenadesCsv(database, normalizedChecksum, files);
     counts.grenadeEvents = await importRoundGrenadeEventsCsv(database, normalizedChecksum, files);
     counts.bombEvents = await importRoundBombEventsCsv(database, normalizedChecksum, files);
+    counts.clockStates = await importRoundClockStatesCsv(database, normalizedChecksum, files);
     database.run('COMMIT');
   } catch (error) {
     try {
@@ -1367,6 +1459,7 @@ function deleteRoundEventTablesByRound(database, checksum, roundNumbers) {
     database.prepare('DELETE FROM round_grenades WHERE checksum = ? AND round_number = ?'),
     database.prepare('DELETE FROM round_grenade_events WHERE checksum = ? AND round_number = ?'),
     database.prepare('DELETE FROM round_bomb_events WHERE checksum = ? AND round_number = ?'),
+    database.prepare('DELETE FROM round_clock_states WHERE checksum = ? AND round_number = ?'),
   ];
 
   try {
@@ -1672,6 +1765,24 @@ async function reconstructRoundFramesFromTables(database, checksum, roundNumber,
     });
   }
 
+  const clockStates = getAll(
+    database,
+    `SELECT tick, phase, label, remaining_seconds, total_seconds, is_paused
+     FROM round_clock_states WHERE checksum = ? AND round_number = ? ORDER BY tick ASC`,
+    baseParams,
+  );
+  for (const row of clockStates) {
+    const frame = ensureFrameEntry(frameByTick, row.tick, startTick, endTick, includeGrenades);
+    if (!frame) continue;
+    frame.clock = {
+      phase: String(row.phase || 'round'),
+      label: String(row.label || 'Round'),
+      remaining_seconds: toFiniteFloat(row.remaining_seconds, 0),
+      total_seconds: toFiniteFloat(row.total_seconds, 0),
+      is_paused: toSafeInteger(row.is_paused, 0) > 0,
+    };
+  }
+
   return collectReconstructedFrames(frameByTick);
 }
 
@@ -1702,6 +1813,11 @@ async function getRoundFrames(checksum, roundNumber) {
   }
   const mapped = mapRoundFrameRow(row);
   if (Array.isArray(mapped.frames) && mapped.frames.length > 0) {
+    const clockStates = await getRoundClockStates(checksum, roundNumber);
+    mapped.frames = attachClockStatesToFrames(mapped.frames, clockStates);
+    if (mapped.framesCount <= 0) {
+      mapped.framesCount = mapped.frames.length;
+    }
     return mapped;
   }
 
@@ -1776,6 +1892,28 @@ async function getRoundBombEvents(checksum, roundNumber) {
   }));
 }
 
+async function getRoundClockStates(checksum, roundNumber) {
+  const database = await getDatabase();
+  const rows = getAll(
+    database,
+    `
+      SELECT
+        tick,
+        phase,
+        label,
+        remaining_seconds,
+        total_seconds,
+        is_paused
+      FROM round_clock_states
+      WHERE checksum = ? AND round_number = ?
+      ORDER BY tick ASC
+    `,
+    [checksum, toNumber(roundNumber)],
+  );
+
+  return rows.map(mapRoundClockStateRow);
+}
+
 async function getCachedRoundsCount(checksum) {
   const database = await getDatabase();
   return toNumber(
@@ -1808,6 +1946,7 @@ module.exports = {
   getRoundFrames,
   getRoundPlayerPositions,
   getRoundBombEvents,
+  getRoundClockStates,
   getCachedRoundsCount,
   getDebugInfo,
   databaseFilePath,
