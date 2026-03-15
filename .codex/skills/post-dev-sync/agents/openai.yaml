@@ -1,0 +1,4 @@
+interface:
+  display_name: "CS2DemoPlayer Post-Dev Sync"
+  short_description: "Write CS2DemoPlayer changes back to the current workday Daily"
+  default_prompt: "Use $post-dev-sync to write this completed CS2DemoPlayer change back to the current workday Daily and matching project pages, using an 08:00 local-time cutoff."

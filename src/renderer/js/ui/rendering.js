@@ -4,10 +4,10 @@ const HUD_PANEL_MIN_WIDTH = 90
 const HUD_PANEL_MAX_WIDTH = 180;
 const HUD_MIN_MAP_SIZE = 360;
 const HUD_PLAYER_SLOT_GAP = 4;     // 缩小槽位之间的上下间距 (4px)
-const HUD_PLAYER_SLOT_MIN_HEIGHT = 52;
-const HUD_PLAYER_SLOT_MAX_HEIGHT = 70;
+const HUD_PLAYER_SLOT_MIN_HEIGHT = 62;
+const HUD_PLAYER_SLOT_MAX_HEIGHT = 82;
 const HUD_PLAYER_SLOTS = 5;
-const DISPLAY_TICKRATE = 32;
+const DISPLAY_TICKRATE = 64;
 const REPLAY_CANVAS_MIN_HEIGHT = 420;
 const REPLAY_CANVAS_SAFE_GUTTER = 12;
 const HUD_PANEL_WIDTH_BY_HEIGHT_RATIO = 0.14;
@@ -17,13 +17,74 @@ const PLAYER_SHOT_MAX_EFFECTS = 10;
 const PLAYER_BLIND_LOOKBACK_SECONDS = 6;
 const PLAYER_BLIND_MIN_DURATION_SECONDS = 0.12;
 
+function getCanvasPixelRatio() {
+  if (typeof window === 'undefined') {
+    return 1;
+  }
+  return Math.max(window.devicePixelRatio || 1, 1);
+}
+
+function getCanvasDisplayWidth() {
+  const inlineWidth = Number.parseFloat(canvas.style.width);
+  if (Number.isFinite(inlineWidth) && inlineWidth > 0) {
+    return inlineWidth;
+  }
+  return Math.max(1, canvas.clientWidth || canvas.width);
+}
+
+function getCanvasDisplayHeight() {
+  const inlineHeight = Number.parseFloat(canvas.style.height);
+  if (Number.isFinite(inlineHeight) && inlineHeight > 0) {
+    return inlineHeight;
+  }
+  return Math.max(1, canvas.clientHeight || canvas.height);
+}
+
+function syncCanvasContextScale(pixelRatio = getCanvasPixelRatio()) {
+  if (typeof ctx.setTransform === 'function') {
+    ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+  }
+  ctx.imageSmoothingEnabled = true;
+  if ('imageSmoothingQuality' in ctx) {
+    ctx.imageSmoothingQuality = 'high';
+  }
+}
+
+function syncCanvasBackingStore(displayWidth, displayHeight, force = false) {
+  const safeDisplayWidth = Math.max(1, Math.round(Number(displayWidth) || 0));
+  const safeDisplayHeight = Math.max(1, Math.round(Number(displayHeight) || 0));
+  const pixelRatio = getCanvasPixelRatio();
+  const targetPixelWidth = Math.max(1, Math.round(safeDisplayWidth * pixelRatio));
+  const targetPixelHeight = Math.max(1, Math.round(safeDisplayHeight * pixelRatio));
+  const targetStyleWidth = `${safeDisplayWidth}px`;
+  const targetStyleHeight = `${safeDisplayHeight}px`;
+
+  if (
+    !force
+    && canvas.width === targetPixelWidth
+    && canvas.height === targetPixelHeight
+    && canvas.style.width === targetStyleWidth
+    && canvas.style.height === targetStyleHeight
+  ) {
+    syncCanvasContextScale(pixelRatio);
+    return false;
+  }
+
+  canvas.style.width = targetStyleWidth;
+  canvas.style.height = targetStyleHeight;
+  canvas.width = targetPixelWidth;
+  canvas.height = targetPixelHeight;
+  syncCanvasContextScale(pixelRatio);
+  return true;
+}
+
 let currentMapViewport = {
   x: 0,
   y: 0,
-  width: canvas.width,
-  height: canvas.height,
-  scaleX: canvas.width / DEFAULT_RADAR_SIZE,
-  scaleY: canvas.height / DEFAULT_RADAR_SIZE,
+  width: getCanvasDisplayWidth(),
+  height: getCanvasDisplayHeight(),
+  scaleX: getCanvasDisplayWidth() / DEFAULT_RADAR_SIZE,
+  scaleY: getCanvasDisplayHeight() / DEFAULT_RADAR_SIZE,
 };
 let currentPlaybackTick = 0;
 let currentPlaybackTickRaw = 0;
@@ -54,13 +115,15 @@ function quantizePlaybackTick(tickValue) {
 
 function buildFullCanvasMapViewport() {
   const radarSize = currentRadarSize > 0 ? currentRadarSize : DEFAULT_RADAR_SIZE;
+  const displayWidth = getCanvasDisplayWidth();
+  const displayHeight = getCanvasDisplayHeight();
   return {
     x: 0,
     y: 0,
-    width: canvas.width,
-    height: canvas.height,
-    scaleX: canvas.width / radarSize,
-    scaleY: canvas.height / radarSize,
+    width: displayWidth,
+    height: displayHeight,
+    scaleX: displayWidth / radarSize,
+    scaleY: displayHeight / radarSize,
   };
 }
 
@@ -134,19 +197,15 @@ function syncReplayCanvasSize(force = false) {
     Math.round((HUD_OUTER_PADDING * 2) + mapSize + (panelWidth * 2) + (HUD_COLUMN_GAP * 2)),
   );
 
-  if (!force && canvas.width === targetWidth && canvas.height === targetHeight) {
-    return false;
-  }
-
-  canvas.width = targetWidth;
-  canvas.height = targetHeight;
-  return true;
+  return syncCanvasBackingStore(targetWidth, targetHeight, force);
 }
 
 function buildCanvasHudLayout() {
   const outer = HUD_OUTER_PADDING;
-  const innerWidth = Math.max(canvas.width - (outer * 2), 1);
-  const innerHeight = Math.max(canvas.height - (outer * 2), 1);
+  const displayWidth = getCanvasDisplayWidth();
+  const displayHeight = getCanvasDisplayHeight();
+  const innerWidth = Math.max(displayWidth - (outer * 2), 1);
+  const innerHeight = Math.max(displayHeight - (outer * 2), 1);
   const mapSize = innerHeight;
   const desiredPanelWidth = getHudPanelWidthByHeight(innerHeight);
   const maxPanelWidthByCanvas = Math.max(40, (innerWidth - mapSize - (HUD_COLUMN_GAP * 2)) / 2);
@@ -184,11 +243,13 @@ function worldToCanvas(gameX, gameY, scaleX, scaleY) {
 }
 
 function drawCanvasBackdrop() {
-  const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+  const displayWidth = getCanvasDisplayWidth();
+  const displayHeight = getCanvasDisplayHeight();
+  const gradient = ctx.createLinearGradient(0, 0, displayWidth, displayHeight);
   gradient.addColorStop(0, '#0b1018');
   gradient.addColorStop(1, '#0f1724');
   ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillRect(0, 0, displayWidth, displayHeight);
 }
 
 function drawFallbackBackground(viewport = currentMapViewport) {
@@ -1082,40 +1143,297 @@ function buildTeamSlotRects(panelRect) {
   return slots;
 }
 
+function normalizePlayerInventoryItems(player) {
+  const rawInventory = player?.inventory;
+  if (Array.isArray(rawInventory)) {
+    return rawInventory.map((item) => String(item || '').trim()).filter(Boolean);
+  }
+
+  if (typeof rawInventory === 'string') {
+    const trimmed = rawInventory.trim();
+    if (!trimmed) {
+      return [];
+    }
+    if (trimmed.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          return parsed.map((item) => String(item || '').trim()).filter(Boolean);
+        }
+      } catch (_error) {
+        return [];
+      }
+    }
+    return [trimmed];
+  }
+
+  return [];
+}
+
+function normalizeInventoryLabel(itemName) {
+  return String(itemName || '').trim().toLowerCase();
+}
+
+function isKnifeInventoryItem(itemName) {
+  const normalized = normalizeInventoryLabel(itemName);
+  return (
+    normalized.includes('knife')
+    || normalized.includes('bayonet')
+    || normalized.includes('karambit')
+    || normalized.includes('butterfly')
+    || normalized.includes('stiletto')
+    || normalized.includes('skeleton')
+    || normalized.includes('ursus')
+    || normalized.includes('falchion')
+    || normalized.includes('bowie')
+    || normalized.includes('talon')
+    || normalized.includes('daggers')
+    || normalized.includes('kukri')
+    || normalized.includes('nomad')
+    || normalized.includes('paracord')
+    || normalized.includes('survival')
+    || normalized.includes('m9 ')
+  );
+}
+
+function classifyUtilityInventoryItem(itemName) {
+  const normalized = normalizeInventoryLabel(itemName);
+  if (!normalized) {
+    return '';
+  }
+  if (normalized.includes('smoke')) return 'SMK';
+  if (normalized.includes('flash')) return 'FL';
+  if (normalized.includes('high explosive') || normalized === 'he grenade' || normalized.includes('he grenade')) return 'HE';
+  if (normalized.includes('molotov')) return 'MOL';
+  if (normalized.includes('incendiary')) return 'INC';
+  if (normalized.includes('decoy')) return 'DEC';
+  if (normalized.includes('c4') || normalized.includes('explosive')) return 'C4';
+  return '';
+}
+
+function isPrimaryInventoryWeapon(itemName) {
+  const normalized = normalizeInventoryLabel(itemName);
+  if (!normalized) {
+    return false;
+  }
+  if (isKnifeInventoryItem(normalized)) {
+    return false;
+  }
+  if (classifyUtilityInventoryItem(normalized)) {
+    return false;
+  }
+  return ![
+    'glock-18',
+    'usp-s',
+    'usp',
+    'p2000',
+    'p250',
+    'five-seven',
+    'fiveseven',
+    'tec-9',
+    'tec9',
+    'cz75-auto',
+    'cz75',
+    'dual berettas',
+    'dualies',
+    'deagle',
+    'desert eagle',
+    'r8 revolver',
+  ].includes(normalized);
+}
+
+function isSidearmInventoryWeapon(itemName) {
+  const normalized = normalizeInventoryLabel(itemName);
+  return [
+    'glock-18',
+    'usp-s',
+    'usp',
+    'p2000',
+    'p250',
+    'five-seven',
+    'fiveseven',
+    'tec-9',
+    'tec9',
+    'cz75-auto',
+    'cz75',
+    'dual berettas',
+    'dualies',
+    'deagle',
+    'desert eagle',
+    'r8 revolver',
+  ].includes(normalized);
+}
+
+function resolvePlayerPrimaryWeapon(player) {
+  const inventoryItems = normalizePlayerInventoryItems(player);
+  const primaryWeapon = inventoryItems.find((item) => isPrimaryInventoryWeapon(item));
+  if (primaryWeapon) {
+    return primaryWeapon;
+  }
+
+  const sidearm = inventoryItems.find((item) => isSidearmInventoryWeapon(item));
+  if (sidearm) {
+    return sidearm;
+  }
+
+  const inventoryFallback = inventoryItems.find((item) => !isKnifeInventoryItem(item) && !classifyUtilityInventoryItem(item));
+  if (inventoryFallback) {
+    return inventoryFallback;
+  }
+
+  for (const candidateLike of [player?.weapon_name, player?.active_weapon_name]) {
+    const candidate = String(candidateLike || '').trim();
+    if (candidate && !isKnifeInventoryItem(candidate) && !classifyUtilityInventoryItem(candidate)) {
+      return candidate;
+    }
+  }
+
+  return '';
+}
+
+function getPlayerUtilityInventory(player) {
+  const utilityItems = [];
+  for (const item of normalizePlayerInventoryItems(player)) {
+    if (!classifyUtilityInventoryItem(item)) {
+      continue;
+    }
+    utilityItems.push(item);
+  }
+
+  const utilitySortOrder = {
+    smoke: 10,
+    flash: 20,
+    he: 30,
+    molotov: 40,
+    incendiary: 50,
+    decoy: 60,
+    c4: 70,
+  };
+
+  return utilityItems.sort((leftItem, rightItem) => {
+    const leftLabel = classifyUtilityInventoryItem(leftItem);
+    const rightLabel = classifyUtilityInventoryItem(rightItem);
+    const leftOrder = leftLabel === 'SMK'
+      ? utilitySortOrder.smoke
+      : leftLabel === 'FL'
+        ? utilitySortOrder.flash
+        : leftLabel === 'HE'
+          ? utilitySortOrder.he
+          : leftLabel === 'MOL'
+            ? utilitySortOrder.molotov
+            : leftLabel === 'INC'
+              ? utilitySortOrder.incendiary
+              : leftLabel === 'DEC'
+                ? utilitySortOrder.decoy
+                : utilitySortOrder.c4;
+    const rightOrder = rightLabel === 'SMK'
+      ? utilitySortOrder.smoke
+      : rightLabel === 'FL'
+        ? utilitySortOrder.flash
+        : rightLabel === 'HE'
+          ? utilitySortOrder.he
+          : rightLabel === 'MOL'
+            ? utilitySortOrder.molotov
+            : rightLabel === 'INC'
+              ? utilitySortOrder.incendiary
+              : rightLabel === 'DEC'
+                ? utilitySortOrder.decoy
+                : utilitySortOrder.c4;
+    if (leftOrder !== rightOrder) {
+      return leftOrder - rightOrder;
+    }
+    return normalizeInventoryLabel(leftItem).localeCompare(normalizeInventoryLabel(rightItem));
+  });
+}
+
+function drawHudInventoryIcon(itemName, iconX, iconY, iconSize, unitScale, opacity = 1) {
+  if (!itemName) {
+    return false;
+  }
+
+  ctx.save();
+  ctx.globalAlpha = opacity;
+  ctx.filter = 'grayscale(1) brightness(1.3)';
+  const iconDrawn = drawWeaponIconOnCanvas(ctx, itemName, iconX, iconY, iconSize);
+  ctx.filter = 'none';
+  ctx.globalAlpha = 1;
+
+  if (!iconDrawn) {
+    drawWeaponFallbackLabel(itemName, iconX, iconY, iconSize, unitScale);
+  }
+
+  ctx.restore();
+  return iconDrawn;
+}
+
 function drawTeamSlotHud(player, slotRect, slotIndex, teamNum, unitScale) {
   const isEmpty = !player;
   const hp = clamp(coerceNonNegativeInteger(player?.health, 0), 0, 100);
   const isDead = !isEmpty && (player.is_alive === false || hp <= 0);
   const slotOpacity = isEmpty ? 0.42 : (isDead ? 0.62 : 1);
   const idLabel = isEmpty ? `Empty #${slotIndex + 1}` : (getPlayerIdLabel(player) || `Player ${slotIndex + 1}`);
-  const hpText = `HP ${hp}`;
   const teamColor = getTeamColorHex(player?.team_num || teamNum);
   const money = isEmpty ? '$0' : `$${coerceNonNegativeInteger(player?.balance, 0)}`;
+  const primaryWeaponName = isEmpty ? '' : resolvePlayerPrimaryWeapon(player);
+  const utilityItems = isEmpty ? [] : getPlayerUtilityInventory(player);
   const barInset = Math.max(2, 2 * unitScale);
-  const barHeight = Math.max(14, 14 * unitScale);
-  const barY = slotRect.y + ((slotRect.height - barHeight) / 2);
-  const barWidth = Math.max(1, slotRect.width - (barInset * 2));
+  const barHeight = Math.max(12, 12 * unitScale);
+  const contentX = slotRect.x + barInset;
+  const contentWidth = Math.max(1, slotRect.width - (barInset * 2));
+  const topY = slotRect.y + Math.max(5, 5 * unitScale);
+  const barY = topY + Math.max(13, 12 * unitScale);
+  const iconRowY = Math.min(
+    slotRect.y + slotRect.height - Math.max(18, 18 * unitScale),
+    barY + barHeight + Math.max(4, 4 * unitScale),
+  );
+  const primaryIconSize = Math.max(18, 17 * unitScale);
+  const utilityIconSize = Math.max(12, 11 * unitScale);
+  const utilityGap = Math.max(2, 2 * unitScale);
+  const utilityRowY = iconRowY + Math.max(1, ((primaryIconSize - utilityIconSize) / 2));
+  const utilityMinX = contentX + primaryIconSize + Math.max(8, 7 * unitScale);
+  const barWidth = contentWidth;
   const fillWidth = barWidth * (hp / 100);
-  const labelY = barY - Math.max(2, 2 * unitScale);
-  const valueY = barY + barHeight + Math.max(4, 4 * unitScale);
+  const hpLabel = isEmpty ? '-' : `${hp} HP`;
 
   ctx.save();
   ctx.globalAlpha = slotOpacity;
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.13)';
-  ctx.fillRect(slotRect.x + barInset, barY, barWidth, barHeight);
-  ctx.fillStyle = teamColor;
-  ctx.fillRect(slotRect.x + barInset, barY, fillWidth, barHeight);
   ctx.font = `700 ${Math.max(11, 11 * unitScale)}px Segoe UI`;
   ctx.textAlign = 'left';
-  ctx.textBaseline = 'bottom';
-  ctx.fillStyle = teamColor;
-  ctx.fillText(idLabel, slotRect.x + barInset, labelY);
-  ctx.font = `600 ${Math.max(10, 10 * unitScale)}px Segoe UI`;
   ctx.textBaseline = 'top';
-  ctx.fillStyle = '#dbe4f1';
-  ctx.fillText(hpText, slotRect.x + barInset, valueY);
+  ctx.fillStyle = isEmpty ? '#8aa0b8' : teamColor;
+  ctx.fillText(fitTextByWidth(idLabel, contentWidth * 0.66), contentX, topY);
+  ctx.font = `600 ${Math.max(10, 10 * unitScale)}px Segoe UI`;
   ctx.textAlign = 'right';
-  ctx.fillText(money, slotRect.x + slotRect.width - barInset, valueY);
+  ctx.fillStyle = '#dbe4f1';
+  ctx.fillText(money, contentX + contentWidth, topY);
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.13)';
+  ctx.fillRect(contentX, barY, barWidth, barHeight);
+  ctx.fillStyle = teamColor;
+  ctx.fillRect(contentX, barY, fillWidth, barHeight);
+  ctx.font = `700 ${Math.max(9, 9 * unitScale)}px Segoe UI`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#f8fafc';
+  ctx.shadowColor = 'rgba(2, 6, 23, 0.82)';
+  ctx.shadowBlur = 4;
+  ctx.fillText(hpLabel, contentX + (contentWidth / 2), barY + (barHeight / 2) + 0.5);
+  ctx.shadowBlur = 0;
+
+  if (primaryWeaponName) {
+    drawHudInventoryIcon(primaryWeaponName, contentX, iconRowY, primaryIconSize, unitScale, 0.94);
+  } else if (!isEmpty) {
+    drawWeaponFallbackLabel('-', contentX, iconRowY, primaryIconSize, unitScale);
+  }
+
+  let utilityX = contentX + contentWidth - utilityIconSize;
+  for (let index = utilityItems.length - 1; index >= 0; index -= 1) {
+    if (utilityX < utilityMinX) {
+      break;
+    }
+
+    drawHudInventoryIcon(utilityItems[index], utilityX, utilityRowY, utilityIconSize, unitScale, 0.9);
+    utilityX -= utilityIconSize + utilityGap;
+  }
   ctx.restore();
 }
 
@@ -1184,7 +1502,7 @@ function drawKillFeedHud(frameIndex, layout, unitScale) {
   ctx.font = `700 ${fontSize}px Segoe UI`;
   ctx.textBaseline = 'middle';
 
-  for (let index = 0; index < drawCount; index += 1) {
+  for (let index = drawCount - 1; index >= 0; index -= 1) {
     const kill = kills[index];
     const sideGap = Math.max(6, 6 * unitScale);
     const maxSideWidth = Math.max(24, (maxRowWidth - iconSize - (sideGap * 4)) / 2);
@@ -1557,11 +1875,12 @@ function resolveFrameBlendByTick(targetTick) {
 
 function renderFrame(players, frameIndex = 0, renderTick = null, grenadeInterpolation = null) {
   syncReplayCanvasSize();
+  syncCanvasContextScale();
   const safePlayers = Array.isArray(players) ? players : [];
   const layout = buildCanvasHudLayout();
   updateMapViewport(layout.map);
 
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.clearRect(0, 0, getCanvasDisplayWidth(), getCanvasDisplayHeight());
   drawCanvasBackdrop();
   drawMapFrame(currentMapViewport);
   const { scaleX, scaleY, unitScale } = getCanvasScale();

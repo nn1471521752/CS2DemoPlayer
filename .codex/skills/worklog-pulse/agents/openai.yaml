@@ -1,0 +1,4 @@
+interface:
+  display_name: "CS2DemoPlayer Worklog Pulse"
+  short_description: "Log a CS2DemoPlayer milestone into the current workday Daily"
+  default_prompt: "Use $worklog-pulse to record this CS2DemoPlayer milestone into the current workday's Daily note, using an 08:00 local-time cutoff."

@@ -188,6 +188,8 @@ def parse_round_economy_dataframe(parser, round_start_ticks):
         return None
 
     tick_props_candidates = [
+        ["team_num", "current_equip_value", "round_start_equip_value", "balance"],
+        ["team_num", "current_equip_value", "balance"],
         ["team_num", "round_start_equip_value", "balance"],
         ["team_num", "balance"],
     ]
@@ -204,10 +206,10 @@ def classify_round_economy(round_number, average_equip_value):
     if round_number in (1, 13):
         return "pistol"
 
-    if average_equip_value < 2200:
+    if average_equip_value < 1000:
         return "eco"
 
-    if average_equip_value < 3900:
+    if average_equip_value < 2400:
         return "force"
 
     return "rifle"
@@ -221,15 +223,27 @@ def update_team_economy_stats(stats, row):
 
     key = (tick, team_num)
     if key not in stats:
-        stats[key] = {"count": 0, "equip_total": 0.0, "equip_count": 0, "balance_total": 0.0}
+        stats[key] = {
+            "count": 0,
+            "current_equip_total": 0.0,
+            "current_equip_count": 0,
+            "round_start_equip_total": 0.0,
+            "round_start_equip_count": 0,
+            "balance_total": 0.0,
+        }
 
     stat = stats[key]
     stat["count"] += 1
 
-    equip_value = _to_float_or_none(row.get("round_start_equip_value"))
-    if equip_value is not None and equip_value >= 0:
-        stat["equip_total"] += equip_value
-        stat["equip_count"] += 1
+    current_equip_value = _to_float_or_none(row.get("current_equip_value"))
+    if current_equip_value is not None and current_equip_value >= 0:
+        stat["current_equip_total"] += current_equip_value
+        stat["current_equip_count"] += 1
+
+    round_start_equip_value = _to_float_or_none(row.get("round_start_equip_value"))
+    if round_start_equip_value is not None and round_start_equip_value >= 0:
+        stat["round_start_equip_total"] += round_start_equip_value
+        stat["round_start_equip_count"] += 1
 
     balance_value = _to_float_or_none(row.get("balance"))
     if balance_value is not None and balance_value >= 0:
@@ -241,8 +255,17 @@ def resolve_team_economy_stat(stats, tick, team_num):
     if not stat:
         return 0, 0
 
-    total = stat["equip_total"] if stat["equip_count"] > 0 else stat["balance_total"]
-    return int(round(max(total, 0))), max(stat["count"], 0)
+    if stat["current_equip_count"] > 0:
+        total = stat["current_equip_total"]
+        count = stat["current_equip_count"]
+    elif stat["round_start_equip_count"] > 0:
+        total = stat["round_start_equip_total"]
+        count = stat["round_start_equip_count"]
+    else:
+        total = stat["balance_total"]
+        count = stat["count"]
+
+    return int(round(max(total, 0))), max(count, 0)
 
 
 def build_round_economy_by_start_tick(parser, round_start_ticks):
@@ -271,7 +294,66 @@ def build_round_economy_by_start_tick(parser, round_start_ticks):
     return economy_by_tick
 
 
-def build_round_record(index, start_tick, end_tick, first_round_start_tick, source_tickrate, economy_meta=None):
+def normalize_round_winner(value):
+    text = _to_string_or_default(value, "").strip().upper()
+    if text in ("CT", "COUNTERTERRORIST", "COUNTER_TERRORIST", "COUNTER-TERRORIST"):
+        return "CT"
+    if text in ("T", "TERRORIST"):
+        return "T"
+
+    numeric_value = _to_int_or_none(value)
+    if numeric_value == TEAM_NUM_CT:
+        return "CT"
+    if numeric_value == TEAM_NUM_T:
+        return "T"
+
+    return ""
+
+
+def build_round_outcome_by_start_tick(parser, round_start_ticks):
+    round_end_df = parse_event_dataframe(parser, "round_end")
+    if round_end_df is None or round_end_df.empty:
+        return {}
+
+    round_end_rows = []
+    for row in round_end_df.to_dict(orient="records"):
+        tick = _to_int_or_none(row.get("tick"))
+        if tick is None or tick < 0:
+            continue
+
+        round_end_rows.append(
+            {
+                "tick": tick,
+                "winner_team": normalize_round_winner(row.get("winner")),
+                "winner_reason": _to_string_or_default(row.get("reason"), ""),
+            }
+        )
+
+    if not round_end_rows:
+        return {}
+
+    round_end_rows.sort(key=lambda row: row["tick"])
+    outcomes_by_tick = {}
+    for index, start_tick in enumerate(round_start_ticks):
+        next_start_tick = round_start_ticks[index + 1] if index + 1 < len(round_start_ticks) else None
+        candidates = [
+            row
+            for row in round_end_rows
+            if row["tick"] >= start_tick and (next_start_tick is None or row["tick"] < next_start_tick)
+        ]
+        if not candidates:
+            continue
+
+        best = candidates[-1]
+        outcomes_by_tick[start_tick] = {
+            "winner_team": best["winner_team"],
+            "winner_reason": best["winner_reason"],
+        }
+
+    return outcomes_by_tick
+
+
+def build_round_record(index, start_tick, end_tick, first_round_start_tick, source_tickrate, economy_meta=None, outcome_meta=None):
     fixed_start_tick = raw_tick_to_fixed(start_tick, source_tickrate)
     fixed_end_tick = raw_tick_to_fixed(end_tick, source_tickrate)
     fixed_first_round_start_tick = raw_tick_to_fixed(first_round_start_tick, source_tickrate)
@@ -290,6 +372,9 @@ def build_round_record(index, start_tick, end_tick, first_round_start_tick, sour
         record["t_economy"] = str(economy_meta.get("t_economy") or "unknown")
         record["ct_equip_value"] = int(_to_float_or_none(economy_meta.get("ct_equip_value")) or 0)
         record["t_equip_value"] = int(_to_float_or_none(economy_meta.get("t_equip_value")) or 0)
+    if isinstance(outcome_meta, dict):
+        record["winner_team"] = normalize_round_winner(outcome_meta.get("winner_team"))
+        record["winner_reason"] = _to_string_or_default(outcome_meta.get("winner_reason"), "")
 
     return record
 
@@ -302,6 +387,7 @@ def build_rounds(parser, source_tickrate):
     round_end_ticks = parse_event_ticks(parser, "round_end")
     first_round_start_tick = round_start_ticks[0]
     round_economy = build_round_economy_by_start_tick(parser, round_start_ticks)
+    round_outcomes = build_round_outcome_by_start_tick(parser, round_start_ticks)
     rounds = []
 
     for index, start_tick in enumerate(round_start_ticks):
@@ -315,6 +401,7 @@ def build_rounds(parser, source_tickrate):
                 first_round_start_tick,
                 source_tickrate,
                 round_economy.get(start_tick),
+                round_outcomes.get(start_tick),
             )
         )
 
@@ -1064,7 +1151,9 @@ def parse_tick_dataframe_for_ticks(parser, ticks):
             "name",
             "active_weapon_name",
             "weapon_name",
+            "inventory",
         ],
+        ["X", "Y", "team_num", "is_alive", "yaw", "health", "balance", "steamid", "name", "active_weapon_name", "weapon_name"],
         ["X", "Y", "team_num", "is_alive", "yaw", "health", "balance", "steamid", "name"],
         ["X", "Y", "team_num", "is_alive", "yaw", "health", "balance", "name"],
         ["X", "Y", "team_num", "is_alive", "yaw"],
@@ -1083,6 +1172,36 @@ def parse_tick_dataframe(parser, start_tick, end_tick, tick_step=1):
     safe_step = max(1, int(tick_step))
     tick_range = range(start_tick, end_tick + 1, safe_step)
     return parse_tick_dataframe_for_ticks(parser, tick_range)
+
+
+def normalize_inventory_items(inventory_value):
+    if inventory_value is None:
+        return []
+
+    if isinstance(inventory_value, (list, tuple, set)):
+        items = []
+        for item in inventory_value:
+            label = _to_string_or_default(item, "")
+            if label:
+                items.append(label)
+        return items
+
+    if isinstance(inventory_value, str):
+        raw_text = inventory_value.strip()
+        if not raw_text:
+            return []
+
+        if raw_text.startswith("["):
+            try:
+                parsed = json.loads(raw_text)
+                if isinstance(parsed, list):
+                    return normalize_inventory_items(parsed)
+            except Exception:
+                pass
+
+        return [raw_text]
+
+    return []
 
 
 def normalize_player_record(player):
@@ -1106,6 +1225,7 @@ def normalize_player_record(player):
         player["active_weapon_name"] = player.get("weapon_name")
     player["active_weapon_name"] = _to_string_or_default(player.get("active_weapon_name"), "")
     player["weapon_name"] = _to_string_or_default(player.get("weapon_name"), player["active_weapon_name"])
+    player["inventory"] = normalize_inventory_items(player.get("inventory"))
 
     if "user_id" in player:
         parsed_user_id = _to_int_or_none(player.get("user_id"))
@@ -1156,6 +1276,7 @@ def build_players_by_tick(players_df):
         "name",
         "active_weapon_name",
         "weapon_name",
+        "inventory",
     ]:
         if optional_column in players_df.columns:
             player_columns.append(optional_column)
@@ -1664,6 +1785,7 @@ def create_export_csv_writers(csv_paths):
             "health",
             "balance",
             "active_weapon_name",
+            "inventory_json",
         ],
     )
     writers["kills_file"], writers["kills"] = create_csv_writer(
@@ -1993,6 +2115,7 @@ def build_player_position_row(round_number, tick_value, player, player_index):
             player.get("active_weapon_name"),
             _to_string_or_default(player.get("weapon_name"), ""),
         ),
+        "inventory_json": _dumps_json_safe(normalize_inventory_items(player.get("inventory"))),
     }
 
 

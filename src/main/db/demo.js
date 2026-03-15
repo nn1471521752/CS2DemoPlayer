@@ -37,7 +37,9 @@ function loadRoundRows(database, checksum, getAll) {
         ct_economy,
         t_economy,
         ct_equip_value,
-        t_equip_value
+        t_equip_value,
+        winner_team,
+        winner_reason
       FROM rounds
       WHERE checksum = ?
       ORDER BY round_number ASC

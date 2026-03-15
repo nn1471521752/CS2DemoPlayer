@@ -274,9 +274,17 @@ function setActiveRound(roundIndex) {
   }
 
   activeRoundIndex = roundIndex;
-  const roundButtons = roundList.querySelectorAll('.round-item');
-  roundButtons.forEach((button, index) => {
-    button.classList.toggle('active', index === roundIndex);
+  const roundEntries = roundList.querySelectorAll('.round-entry');
+  roundEntries.forEach((entry, index) => {
+    const isActive = index === roundIndex;
+    entry.classList.toggle('active', isActive);
+    const button = entry.querySelector('.round-item');
+    if (button) {
+      button.classList.toggle('active', isActive);
+    }
+    if (isActive && typeof entry.scrollIntoView === 'function') {
+      entry.scrollIntoView({ block: 'nearest' });
+    }
   });
 }
 
@@ -525,13 +533,28 @@ function normalizeRoundEconomyCode(codeLike) {
   return 'unknown';
 }
 
-function formatRoundEconomySummary(round) {
+function getRoundWinnerTeamLabel(round) {
+  const winnerTeam = String(round?.winner_team || '').trim().toUpperCase();
+  return winnerTeam === 'T' || winnerTeam === 'CT' ? winnerTeam : '';
+}
+
+function getRoundWinnerClassName(round) {
+  const winnerTeam = getRoundWinnerTeamLabel(round);
+  if (winnerTeam === 'T') {
+    return 'round-winner-t';
+  }
+  if (winnerTeam === 'CT') {
+    return 'round-winner-ct';
+  }
+  return 'round-winner-unknown';
+}
+
+function resolveRoundEconomyTag(round) {
   const tCode = normalizeRoundEconomyCode(round?.t_economy);
   const ctCode = normalizeRoundEconomyCode(round?.ct_economy);
-  const tValue = coerceNonNegativeInteger(round?.t_equip_value, 0);
-  const ctValue = coerceNonNegativeInteger(round?.ct_equip_value, 0);
   const roundNumber = coerceNonNegativeInteger(round?.number, 0);
   let fullRoundCode = 'force';
+
   if (roundNumber === 1 || roundNumber === 13) {
     fullRoundCode = 'pistol';
   } else if (tCode === 'rifle' && ctCode === 'rifle') {
@@ -540,50 +563,60 @@ function formatRoundEconomySummary(round) {
     fullRoundCode = 'eco';
   } else if (tCode === 'pistol' && ctCode === 'pistol') {
     fullRoundCode = 'pistol';
-  } else if (tCode === 'unknown' && ctCode === 'unknown' && tValue <= 0 && ctValue <= 0) {
+  } else if (tCode === 'unknown' && ctCode === 'unknown') {
     fullRoundCode = 'unknown';
   }
-  const label = ROUND_ECONOMY_TEXT_BY_CODE[fullRoundCode] || ROUND_ECONOMY_TEXT_BY_CODE.unknown;
-  return `经济: ${label} | T $${tValue} | CT $${ctValue}`;
-}
 
-function buildRoundMetaText(round) {
-  const hasSeconds = Number.isFinite(Number(round.start_seconds)) && Number.isFinite(Number(round.end_seconds));
-  if (hasSeconds) {
-    return `Time ${formatMatchClock(round.start_seconds)} - ${formatMatchClock(round.end_seconds)} (${formatMatchClock(round.duration_seconds)})`;
-  }
-  return `Tick ${round.start_tick} - ${round.end_tick}`;
+  const labelByCode = {
+    pistol: 'Pistol',
+    eco: 'Eco',
+    force: 'Force',
+    rifle: 'Full Buy',
+    unknown: 'Unknown',
+  };
+
+  return {
+    label: labelByCode[fullRoundCode] || labelByCode.unknown,
+    className: `round-economy-tag round-economy-${fullRoundCode}`,
+  };
 }
 
 function createRoundNoteEditor(roundNumber) {
   const wrapper = document.createElement('div');
   wrapper.className = 'round-note-wrap';
 
-  const input = document.createElement('textarea');
+  const input = document.createElement('input');
+  input.type = 'text';
   input.className = 'round-note-input';
-  input.placeholder = '回合备注...';
+  input.placeholder = 'Note / tags';
   input.value = loadRoundNote(roundNumber);
-  input.rows = 2;
   input.addEventListener('click', (event) => event.stopPropagation());
-  input.addEventListener('change', () => {
-    saveRoundNote(roundNumber, input.value);
-  });
 
-  const saveButton = document.createElement('button');
-  saveButton.type = 'button';
-  saveButton.className = 'round-note-save';
-  saveButton.innerText = '保存备注';
-  saveButton.addEventListener('click', (event) => {
-    event.stopPropagation();
-    const saved = saveRoundNote(roundNumber, input.value);
-    setStatus(
-      saved ? `Round ${roundNumber} 备注已保存` : `Round ${roundNumber} 备注保存失败`,
-      saved ? '#2ecc71' : '#e74c3c',
-    );
+  let lastSavedValue = input.value;
+  const persistNote = () => {
+    const nextValue = String(input.value || '');
+    if (nextValue === lastSavedValue) {
+      return;
+    }
+
+    const saved = saveRoundNote(roundNumber, nextValue);
+    if (!saved) {
+      setStatus(`Round R${roundNumber} note save failed.`, '#e74c3c');
+      return;
+    }
+
+    lastSavedValue = nextValue;
+  };
+
+  input.addEventListener('blur', persistNote);
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      input.blur();
+    }
   });
 
   wrapper.appendChild(input);
-  wrapper.appendChild(saveButton);
   return wrapper;
 }
 
@@ -610,13 +643,17 @@ function renderRoundList() {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'round-item';
-    const metaText = buildRoundMetaText(round);
-    const economyText = formatRoundEconomySummary(round);
+
+    const winnerTeam = getRoundWinnerTeamLabel(round) || 'Unknown';
+    const winnerClassName = getRoundWinnerClassName(round);
+    const economyTag = resolveRoundEconomyTag(round);
+    const roundLabel = `R${coerceNonNegativeInteger(round?.number, index + 1)}`;
+
     button.innerHTML = `
-      <span class="round-item-title">Round ${round.number}</span>
-      <span class="round-item-meta">${metaText}</span>
-      <span class="round-item-meta round-item-economy">${economyText}</span>
+      <span class="round-item-title ${winnerClassName}">${escapeHtml(roundLabel)}</span>
+      <span class="${economyTag.className}">${escapeHtml(economyTag.label)}</span>
     `;
+    button.title = `${winnerTeam} win`;
 
     button.addEventListener('click', () => {
       loadRoundByIndex(index);
@@ -629,5 +666,3 @@ function renderRoundList() {
 
   setActiveRound(-1);
 }
-
-

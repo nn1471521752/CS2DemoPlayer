@@ -305,6 +305,8 @@ function mapRoundRow(row) {
     t_economy: String(row.t_economy || 'unknown'),
     ct_equip_value: toNumber(row.ct_equip_value),
     t_equip_value: toNumber(row.t_equip_value),
+    winner_team: String(row.winner_team || ''),
+    winner_reason: String(row.winner_reason || ''),
   };
 }
 
@@ -396,6 +398,7 @@ function mapPlayerPositionRow(row) {
     health: toNumber(row.health),
     balance: toNumber(row.balance),
     active_weapon_name: String(row.active_weapon_name || ''),
+    inventory: parseJsonArray(String(row.inventory_json || '')),
   };
 }
 
@@ -486,6 +489,8 @@ function normalizeRounds(rounds) {
       t_economy: String(round.t_economy || 'unknown'),
       ct_equip_value: toNumber(round.ct_equip_value),
       t_equip_value: toNumber(round.t_equip_value),
+      winner_team: String(round.winner_team || ''),
+      winner_reason: String(round.winner_reason || ''),
     }))
     .filter((round) => round.number > 0)
     .sort((a, b) => a.number - b.number);
@@ -538,9 +543,11 @@ const INSERT_ROUND_SQL = `
     ct_economy,
     t_economy,
     ct_equip_value,
-    t_equip_value
+    t_equip_value,
+    winner_team,
+    winner_reason
   )
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `;
 
 function resolveDemoIndexWriteMeta(database, checksum, input) {
@@ -598,6 +605,8 @@ function writeDemoAndRounds(database, checksum, demoUpsertParams, normalizedRoun
         round.t_economy,
         round.ct_equip_value,
         round.t_equip_value,
+        round.winner_team,
+        round.winner_reason,
       ]);
     }
   } finally {
@@ -778,6 +787,7 @@ function normalizePlayerPositionEntry(checksum, roundNumber, frame, player, play
     health: Math.max(0, toSafeInteger(player?.health, 0)),
     balance: Math.max(0, toSafeInteger(player?.balance, 0)),
     activeWeaponName: String(player?.active_weapon_name || player?.weapon_name || ''),
+    inventoryJson: JSON.stringify(Array.isArray(player?.inventory) ? player.inventory : []),
   };
 }
 
@@ -897,9 +907,10 @@ const UPSERT_PLAYER_POSITION_SQL = `
     is_alive,
     health,
     balance,
-    active_weapon_name
+    active_weapon_name,
+    inventory_json
   )
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(checksum, round_number, tick, player_key) DO UPDATE SET
     user_id = excluded.user_id,
     player_name = excluded.player_name,
@@ -910,7 +921,8 @@ const UPSERT_PLAYER_POSITION_SQL = `
     is_alive = excluded.is_alive,
     health = excluded.health,
     balance = excluded.balance,
-    active_weapon_name = excluded.active_weapon_name
+    active_weapon_name = excluded.active_weapon_name,
+    inventory_json = excluded.inventory_json
 `;
 
 const INSERT_ROUND_KILL_SQL = `
@@ -1124,6 +1136,7 @@ async function importPlayerPositionsCsv(database, checksum, csvFiles) {
         Math.max(0, toSafeInteger(row.health, 0)),
         Math.max(0, toSafeInteger(row.balance, 0)),
         String(row.active_weapon_name || ''),
+        String(row.inventory_json || '[]'),
       ]);
     });
   } finally {
@@ -1498,6 +1511,7 @@ function writeRoundPlayerPositions(database, rows) {
         row.health,
         row.balance,
         row.activeWeaponName,
+        row.inventoryJson,
       ]);
     }
   } finally {
@@ -1589,6 +1603,7 @@ function mapPlayerPositionToFramePlayer(row) {
     name: String(row.player_name || ''),
     active_weapon_name: String(row.active_weapon_name || ''),
     weapon_name: String(row.active_weapon_name || ''),
+    inventory: parseJsonArray(String(row.inventory_json || '')),
   };
 }
 
@@ -1601,7 +1616,7 @@ async function reconstructRoundFramesFromTables(database, checksum, roundNumber,
   const baseParams = [checksum, toNumber(roundNumber)];
   const players = getAll(
     database,
-    `SELECT tick, user_id, player_name, team_num, x, y, yaw, is_alive, health, balance, active_weapon_name
+    `SELECT tick, user_id, player_name, team_num, x, y, yaw, is_alive, health, balance, active_weapon_name, inventory_json
      FROM player_positions WHERE checksum = ? AND round_number = ? ORDER BY tick ASC, player_key ASC`,
     baseParams,
   );
@@ -1852,7 +1867,8 @@ async function getRoundPlayerPositions(checksum, roundNumber) {
         is_alive,
         health,
         balance,
-        active_weapon_name
+        active_weapon_name,
+        inventory_json
       FROM player_positions
       WHERE checksum = ? AND round_number = ?
       ORDER BY tick ASC, player_key ASC

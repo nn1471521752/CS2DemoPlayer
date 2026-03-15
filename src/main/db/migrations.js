@@ -35,6 +35,8 @@ const CREATE_ROUNDS_TABLE_SQL = `
     t_economy TEXT NOT NULL DEFAULT 'unknown',
     ct_equip_value INTEGER NOT NULL DEFAULT 0,
     t_equip_value INTEGER NOT NULL DEFAULT 0,
+    winner_team TEXT NOT NULL DEFAULT '',
+    winner_reason TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (checksum, round_number),
     FOREIGN KEY (checksum) REFERENCES demos(checksum) ON DELETE CASCADE
   );
@@ -82,6 +84,7 @@ const CREATE_PLAYER_POSITIONS_TABLE_SQL = `
     health INTEGER NOT NULL DEFAULT 0,
     balance INTEGER NOT NULL DEFAULT 0,
     active_weapon_name TEXT NOT NULL DEFAULT '',
+    inventory_json TEXT NOT NULL DEFAULT '[]',
     PRIMARY KEY (checksum, round_number, tick, player_key),
     FOREIGN KEY (checksum) REFERENCES demos(checksum) ON DELETE CASCADE
   );
@@ -329,8 +332,20 @@ function ensureColumns(database, hasColumn) {
     database.run(`ALTER TABLE rounds ADD COLUMN t_equip_value INTEGER NOT NULL DEFAULT 0;`);
   }
 
+  if (!hasColumn(database, 'rounds', 'winner_team')) {
+    database.run(`ALTER TABLE rounds ADD COLUMN winner_team TEXT NOT NULL DEFAULT '';`);
+  }
+
+  if (!hasColumn(database, 'rounds', 'winner_reason')) {
+    database.run(`ALTER TABLE rounds ADD COLUMN winner_reason TEXT NOT NULL DEFAULT '';`);
+  }
+
   if (!hasColumn(database, 'round_frames', 'has_grenades')) {
     database.run(`ALTER TABLE round_frames ADD COLUMN has_grenades INTEGER NOT NULL DEFAULT 0;`);
+  }
+
+  if (!hasColumn(database, 'player_positions', 'inventory_json')) {
+    database.run(`ALTER TABLE player_positions ADD COLUMN inventory_json TEXT NOT NULL DEFAULT '[]';`);
   }
 }
 
