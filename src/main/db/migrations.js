@@ -55,6 +55,7 @@ const CREATE_ROUND_FRAMES_TABLE_SQL = `
     end_tick INTEGER NOT NULL,
     tickrate REAL NOT NULL DEFAULT 64,
     has_grenades INTEGER NOT NULL DEFAULT 0,
+    team_display_json TEXT NOT NULL DEFAULT '{}',
     frames_json TEXT NOT NULL,
     frames_count INTEGER NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL,
@@ -342,6 +343,10 @@ function ensureColumns(database, hasColumn) {
 
   if (!hasColumn(database, 'round_frames', 'has_grenades')) {
     database.run(`ALTER TABLE round_frames ADD COLUMN has_grenades INTEGER NOT NULL DEFAULT 0;`);
+  }
+
+  if (!hasColumn(database, 'round_frames', 'team_display_json')) {
+    database.run(`ALTER TABLE round_frames ADD COLUMN team_display_json TEXT NOT NULL DEFAULT '{}';`);
   }
 
   if (!hasColumn(database, 'player_positions', 'inventory_json')) {

@@ -9,6 +9,17 @@ const {
   buildParseStartPayload,
 } = require('./ipc-parse-progress');
 const {
+  isLegacyCachedRoundResponse,
+  shouldServeCachedRoundResponse,
+} = require('./round-cache-utils');
+const {
+  annotateRoundsWithSideScores,
+  buildRoundTeamDisplay,
+  hasTeamDisplayNames,
+  normalizeTeamDisplay,
+  stripTeamClanNamesFromFrames,
+} = require('./round-team-display-utils');
+const {
   normalizeConcurrency,
   runTaskQueue,
 } = require('./task-queue');
@@ -309,6 +320,10 @@ function normalizeRoundsForFixedTickrate(rounds, sourceTickrate) {
   return rounds.map((round) => normalizeRoundForFixedTickrate(round, sourceTickrate));
 }
 
+function buildUiRounds(rounds, sourceTickrate) {
+  return annotateRoundsWithSideScores(normalizeRoundsForFixedTickrate(rounds, sourceTickrate));
+}
+
 function normalizeRoundResponseForFixedTickrate(payload, sourceTickrate) {
   const normalized = { ...payload };
   const effectiveSourceTickrate = resolveEffectiveSourceTickrate(sourceTickrate, payload?.tickrate);
@@ -528,6 +543,21 @@ function hasBombEventsInFrameCache(frames) {
   return frames.some((frame) => frame && Object.prototype.hasOwnProperty.call(frame, 'bomb_events'));
 }
 
+function hasTeamClanNamesInFrameCache(frames) {
+  if (!Array.isArray(frames) || frames.length === 0) {
+    return false;
+  }
+
+  return frames.some((frame) => Array.isArray(frame?.players) && frame.players.some((player) => {
+    const teamClanName = String(player?.team_clan_name || '').trim();
+    return teamClanName.length > 0;
+  }));
+}
+
+function resolveRoundTeamDisplay(teamDisplay, frames) {
+  return buildRoundTeamDisplay(frames, normalizeTeamDisplay(teamDisplay));
+}
+
 function emitParseProgress(sender, payload) {
   if (!sender || typeof sender.send !== 'function') {
     return;
@@ -599,7 +629,7 @@ function buildDemoPreviewResponse(demo, fileExists) {
   const cachedRoundsCount = toInteger(demo.cachedRoundsCount);
   const cachedGrenadeRoundsCount = toInteger(demo.cachedGrenadeRoundsCount);
   const sourceTickrate = Number(demo.tickrate) || 64;
-  const rounds = normalizeRoundsForFixedTickrate(demo.rounds, sourceTickrate);
+  const rounds = buildUiRounds(demo.rounds, sourceTickrate);
 
   return {
     status: 'success',
@@ -644,7 +674,7 @@ function buildPreviewSuccessResponse(parserResult, indexedDemo, existingDemo) {
   const cachedRoundsCount = toInteger(indexedDemo?.cachedRoundsCount);
   const cachedGrenadeRoundsCount = toInteger(indexedDemo?.cachedGrenadeRoundsCount);
   const sourceTickrate = Number(indexedDemo?.tickrate || parserResult.tickrate) || 64;
-  const rounds = normalizeRoundsForFixedTickrate(indexedDemo?.rounds || parserResult.rounds || [], sourceTickrate);
+  const rounds = buildUiRounds(indexedDemo?.rounds || parserResult.rounds || [], sourceTickrate);
 
   return {
     ...parserResult,
@@ -986,7 +1016,7 @@ async function buildParseCurrentDemoSuccess(
     && cachedRoundsCount >= roundsCount
     && cachedGrenadeRoundsCount >= roundsCount;
   const sourceTickrate = Number(refreshedDemo?.tickrate || persistedDemo.tickrate) || 64;
-  const rounds = normalizeRoundsForFixedTickrate(refreshedDemo?.rounds || persistedDemo.rounds, sourceTickrate);
+  const rounds = buildUiRounds(refreshedDemo?.rounds || persistedDemo.rounds, sourceTickrate);
   const parseElapsedMs = Math.max(Date.now() - parseStartedAtMs, 0);
 
   return appendDbInfo({
@@ -1154,7 +1184,7 @@ async function handleLoadDemoFromDb(_event, payload = {}) {
     const cachedRoundsCount = toInteger(demo.cachedRoundsCount);
     const cachedGrenadeRoundsCount = toInteger(demo.cachedGrenadeRoundsCount);
     const sourceTickrate = Number(demo.tickrate) || 64;
-    const rounds = normalizeRoundsForFixedTickrate(demo.rounds, sourceTickrate);
+    const rounds = buildUiRounds(demo.rounds, sourceTickrate);
 
     return appendDbInfo({
       status: 'success',
@@ -1198,13 +1228,21 @@ function validateRoundRange(payload = {}) {
 
 function buildCachedRoundResponse(cachedRound, cachedRoundsCount, roundNumber, bombEvents = []) {
   const hasGrenades = Boolean(cachedRound.hasGrenades) || hasGrenadesInFrameCache(cachedRound.frames);
-  const hasGrenadeEvents = hasGrenadeEventsInFrameCache(cachedRound.frames);
-  const hasBombEvents = hasBombEventsInFrameCache(cachedRound.frames);
-  const hasFullGrenadeData = hasGrenades && hasGrenadeEvents;
-  const hasFullRoundData = hasFullGrenadeData && hasBombEvents;
+  const hasCompleteGrenadeData = !hasGrenades || hasGrenadeEventsInFrameCache(cachedRound.frames);
+  const teamDisplay = resolveRoundTeamDisplay(cachedRound.teamDisplay, cachedRound.frames);
+  const legacyVisualResponse = isLegacyCachedRoundResponse({
+    status: 'success',
+    frames: cachedRound.frames,
+    hasGrenades,
+    team_display: teamDisplay,
+  });
+  const storageNeedsUpgrade = (
+    (!hasTeamDisplayNames(cachedRound.teamDisplay) && hasTeamDisplayNames(teamDisplay))
+    || hasTeamClanNamesInFrameCache(cachedRound.frames)
+  );
   const payload = {
     status: 'success',
-    source: hasFullRoundData ? 'database-cache' : 'database-cache-legacy',
+    source: legacyVisualResponse ? 'database-cache-legacy' : 'database-cache',
     mode: 'round',
     map: null,
     map_raw: null,
@@ -1215,8 +1253,9 @@ function buildCachedRoundResponse(cachedRound, cachedRoundsCount, roundNumber, b
     frame_step: 1,
     frames: cachedRound.frames,
     cachedRoundsCount,
-    hasGrenades: hasFullGrenadeData,
-    cacheNeedsUpgrade: !hasFullRoundData,
+    hasGrenades: hasGrenades && hasCompleteGrenadeData,
+    cacheNeedsUpgrade: legacyVisualResponse || storageNeedsUpgrade,
+    team_display: teamDisplay,
     ...buildBombTickPayloadFromEvents(bombEvents),
   };
   return normalizeRoundResponseForFixedTickrate(payload, cachedRound.tickrate);
@@ -1247,13 +1286,16 @@ async function persistRoundCacheIfPossible(roundInput, liveResult, checksum = se
   }
 
   try {
+    const liveFrames = Array.isArray(liveResult.frames) ? liveResult.frames : [];
+    const teamDisplay = resolveRoundTeamDisplay(liveResult.team_display || liveResult.teamDisplay, liveFrames);
     await saveRoundFrames(checksum, {
       roundNumber: roundInput.roundNumber,
       startTick: roundInput.startTick,
       endTick: roundInput.endTick,
       tickrate: Number(liveResult.tickrate) || 64,
       hasGrenades: Boolean(liveResult.includes_grenades),
-      frames: Array.isArray(liveResult.frames) ? liveResult.frames : [],
+      teamDisplay,
+      frames: stripTeamClanNamesFromFrames(liveFrames),
     });
   } catch (error) {
     console.warn(`[Round Cache] Write failed for round ${roundInput.roundNumber}: ${error.message}`);
@@ -1265,11 +1307,13 @@ function buildRoundUpgradeJobKey(checksum, roundNumber) {
 }
 
 function buildLiveRoundResponse(liveResult, source, cachedRoundsCount, cacheNeedsUpgrade) {
+  const teamDisplay = resolveRoundTeamDisplay(liveResult.team_display || liveResult.teamDisplay, liveResult.frames);
   const payload = {
     ...liveResult,
     source,
     cachedRoundsCount,
     cacheNeedsUpgrade,
+    team_display: teamDisplay,
   };
   return normalizeRoundResponseForFixedTickrate(payload, liveResult?.tickrate);
 }
@@ -1323,7 +1367,10 @@ async function handleAnalyzeDemoRound(_event, payload = {}) {
   if (roundInput.frameStep === 1) {
     const cachedResponse = await tryReadCachedRound(roundInput.roundNumber);
     if (cachedResponse) {
-      if (!cachedResponse.cacheNeedsUpgrade) {
+      if (shouldServeCachedRoundResponse(cachedResponse)) {
+        if (cachedResponse.cacheNeedsUpgrade) {
+          startRoundUpgradeJobIfNeeded(roundInput, checksumSnapshot, demoPathSnapshot);
+        }
         return cachedResponse;
       }
       cachedLegacyResponse = cachedResponse;
@@ -1573,7 +1620,7 @@ function buildBombTickPayloadFromEvents(bombEvents = []) {
   return payload;
 }
 
-function buildRoundPositionsResponse(roundInput, tickrate, cachedRoundsCount, positions, bombEvents = [], clockStates = []) {
+function buildRoundPositionsResponse(roundInput, tickrate, cachedRoundsCount, positions, bombEvents = [], clockStates = [], teamDisplay = {}) {
   void tickrate;
   const playersByTick = buildPlayersByTickMap(positions);
   const frames = attachClockStatesToFrames(
@@ -1595,6 +1642,7 @@ function buildRoundPositionsResponse(roundInput, tickrate, cachedRoundsCount, po
     cachedRoundsCount,
     hasGrenades: false,
     cacheNeedsUpgrade: false,
+    team_display: normalizeTeamDisplay(teamDisplay),
     positionsCount: Array.isArray(positions) ? positions.length : 0,
     ...buildBombTickPayloadFromEvents(bombEvents),
   };
@@ -1621,14 +1669,7 @@ async function handleAnalyzeDemoRoundPositions(event, payload = {}) {
 
     if (Array.isArray(parseResult.frames) && parseResult.frames.length > 0) {
       try {
-        await saveRoundFrames(checksumSnapshot, {
-          roundNumber: roundInput.roundNumber,
-          startTick: roundInput.startTick,
-          endTick: roundInput.endTick,
-          tickrate: Number(parseResult.tickrate) || 64,
-          hasGrenades: Boolean(parseResult.includes_grenades || parseResult.hasGrenades),
-          frames: parseResult.frames,
-        });
+        await persistRoundCacheIfPossible(roundInput, parseResult, checksumSnapshot);
       } catch (error) {
         console.warn(`[Round Positions] backfill failed for round ${roundInput.roundNumber}: ${error.message}`);
       }
@@ -1652,6 +1693,7 @@ async function handleAnalyzeDemoRoundPositions(event, payload = {}) {
         cachedRoundsCount,
         hasGrenades: false,
         cacheNeedsUpgrade: false,
+        team_display: normalizeTeamDisplay(parseResult.team_display || parseResult.teamDisplay),
         positionsCount: 0,
         bomb_planted_tick: parseResult.bomb_planted_tick ?? null,
         bomb_defused_tick: parseResult.bomb_defused_tick ?? null,
@@ -1665,6 +1707,7 @@ async function handleAnalyzeDemoRoundPositions(event, payload = {}) {
   const cachedRoundsCount = await getCachedRoundsCount(checksumSnapshot);
   const bombEvents = await getRoundBombEvents(checksumSnapshot, roundInput.roundNumber);
   const clockStates = await getRoundClockStates(checksumSnapshot, roundInput.roundNumber);
+  const cachedRoundResponse = await tryReadCachedRound(roundInput.roundNumber);
   return buildRoundPositionsResponse(
     roundInput,
     tickrate,
@@ -1672,6 +1715,7 @@ async function handleAnalyzeDemoRoundPositions(event, payload = {}) {
     positions,
     bombEvents,
     clockStates,
+    cachedRoundResponse?.team_display || cachedRoundResponse?.teamDisplay || {},
   );
 }
 

@@ -1,7 +1,7 @@
 const TEAM_NUM_T = 2;
 const TEAM_NUM_CT = 3;
 const TEAM_SLOT_COUNT = 5;
-const KILL_FEED_WINDOW_SECONDS = 12;
+const KILL_FEED_WINDOW_SECONDS = 7;
 const KILL_FEED_MAX_ITEMS = 6;
 
 let teamPanelOrder = {
@@ -12,6 +12,11 @@ let teamPanelOrder = {
 let teamPlayerStateByTeam = {
   [TEAM_NUM_T]: new Map(),
   [TEAM_NUM_CT]: new Map(),
+};
+
+let teamDisplayNameByTeam = {
+  [TEAM_NUM_T]: '',
+  [TEAM_NUM_CT]: '',
 };
 
 function getPlayerStableKey(player) {
@@ -161,6 +166,69 @@ function getHudTeamSlotsForFrame(players) {
   };
 }
 
+function resolveTeamClanName(teamPlayers) {
+  const counts = new Map();
+  for (const player of teamPlayers) {
+    const teamClanName = String(player?.team_clan_name || '').trim();
+    if (!teamClanName) {
+      continue;
+    }
+    counts.set(teamClanName, (counts.get(teamClanName) || 0) + 1);
+  }
+
+  let selectedName = '';
+  let selectedCount = -1;
+  for (const [teamClanName, count] of counts.entries()) {
+    if (count > selectedCount) {
+      selectedName = teamClanName;
+      selectedCount = count;
+    }
+  }
+
+  return selectedName;
+}
+
+function resolveActiveRoundScore(teamNum) {
+  const activeRound = Array.isArray(roundsData) && activeRoundIndex >= 0 ? roundsData[activeRoundIndex] : null;
+  if (!activeRound || typeof activeRound !== 'object') {
+    return null;
+  }
+
+  const scoreValue = Number(teamNum) === TEAM_NUM_T ? activeRound.t_score : activeRound.ct_score;
+  if (!Number.isFinite(Number(scoreValue)) || Number(scoreValue) < 0) {
+    return null;
+  }
+
+  return Math.floor(Number(scoreValue));
+}
+
+function syncTeamDisplayName(teamNum, teamPlayers) {
+  const resolvedName = resolveTeamClanName(teamPlayers);
+  if (resolvedName) {
+    teamDisplayNameByTeam[teamNum] = resolvedName;
+  }
+  return teamDisplayNameByTeam[teamNum] || '';
+}
+
+function resolveRoundTeamDisplayMeta(teamNum, fallbackName) {
+  const roundMeta = currentRoundTeamDisplayByTeam?.[teamNum] || currentRoundTeamDisplayByTeam?.[String(teamNum)] || null;
+  const roundName = String(roundMeta?.name || '').trim();
+  return {
+    name: roundName || fallbackName || '',
+    score: resolveActiveRoundScore(teamNum),
+  };
+}
+
+function getHudTeamDisplayMetaForFrame(players) {
+  const tPlayers = getTeamPlayers(players, TEAM_NUM_T);
+  const ctPlayers = getTeamPlayers(players, TEAM_NUM_CT);
+
+  return {
+    [TEAM_NUM_T]: resolveRoundTeamDisplayMeta(TEAM_NUM_T, syncTeamDisplayName(TEAM_NUM_T, tPlayers)),
+    [TEAM_NUM_CT]: resolveRoundTeamDisplayMeta(TEAM_NUM_CT, syncTeamDisplayName(TEAM_NUM_CT, ctPlayers)),
+  };
+}
+
 function resetTeamPanelState() {
   teamPanelOrder = {
     [TEAM_NUM_T]: [],
@@ -169,6 +237,10 @@ function resetTeamPanelState() {
   teamPlayerStateByTeam = {
     [TEAM_NUM_T]: new Map(),
     [TEAM_NUM_CT]: new Map(),
+  };
+  teamDisplayNameByTeam = {
+    [TEAM_NUM_T]: '',
+    [TEAM_NUM_CT]: '',
   };
 }
 

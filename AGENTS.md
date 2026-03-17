@@ -36,7 +36,8 @@
   - `E:\obsidian\02-Apps\CS2DemoPlayer\Hub.md`
   - `E:\obsidian\02-Apps\CS2DemoPlayer\Sprint.md`
   - `E:\obsidian\02-Apps\CS2DemoPlayer\Changelog.md`
-- 默认开发流程是：`pre-dev-sync -> worklog-pulse（开发中明确节点时） -> post-dev-sync`。
+- 默认开发流程是：`app-pre-dev-sync -> app-worklog-pulse（开发中明确节点时） -> app-post-dev-sync`。
+- 这 3 个 app skills 由 `E:\codex-skills` 管理，并安装到 `C:\Users\Administrator\.codex\skills`。
 - 开始开发前，先读取对应 `Hub.md`、`Sprint.md`、`Changelog.md`，并检查当天 `01-Daily` 是否已经聚焦到 CS2DemoPlayer。
 - 开发中完成明确节点后，优先补记当天 `01-Daily` 的执行记录，再决定是否同步项目页。
 - 结束任务前，至少检查当天 `01-Daily`、`Sprint.md`、`Changelog.md`；只有项目级目标、阶段或阻塞变化时再更新 `Hub.md`。

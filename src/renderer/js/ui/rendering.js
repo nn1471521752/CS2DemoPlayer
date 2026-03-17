@@ -1,12 +1,12 @@
 const HUD_OUTER_PADDING = 2;       // 压缩外侧边距到最小 (2px)
-const HUD_COLUMN_GAP = 4;          // 压缩侧边栏与地图的内侧间距 (4px)
+const HUD_COLUMN_GAP = 4;          // 侧边栏与地图的内侧间距
 const HUD_PANEL_MIN_WIDTH = 90
 const HUD_PANEL_MAX_WIDTH = 180;
 const HUD_MIN_MAP_SIZE = 360;
-const HUD_PLAYER_SLOT_GAP = 4;     // 缩小槽位之间的上下间距 (4px)
-const HUD_PLAYER_SLOT_MIN_HEIGHT = 62;
-const HUD_PLAYER_SLOT_MAX_HEIGHT = 82;
+const HUD_PLAYER_SLOT_GAP = 2;     // 缩小槽位之间的上下间距
 const HUD_PLAYER_SLOTS = 5;
+const HUD_TEAM_HEADER_MIN_HEIGHT = 22;
+const HUD_TEAM_HEADER_MAX_HEIGHT = 30;
 const DISPLAY_TICKRATE = 64;
 const REPLAY_CANVAS_MIN_HEIGHT = 420;
 const REPLAY_CANVAS_SAFE_GUTTER = 12;
@@ -16,6 +16,10 @@ const PLAYER_SHOT_TRACER_WORLD_UNITS = 240;
 const PLAYER_SHOT_MAX_EFFECTS = 10;
 const PLAYER_BLIND_LOOKBACK_SECONDS = 6;
 const PLAYER_BLIND_MIN_DURATION_SECONDS = 0.12;
+const TEAM_PANEL_FALLBACK_NAME_BY_TEAM = Object.freeze({
+  [TEAM_NUM_T]: 'T Side',
+  [TEAM_NUM_CT]: 'CT Side',
+});
 
 function getCanvasPixelRatio() {
   if (typeof window === 'undefined') {
@@ -484,17 +488,23 @@ function drawSmokeEventCircle(worldPoint, throwerTeamNum, elapsedSeconds, durati
   const center = worldToCanvas(worldPoint.x, worldPoint.y, scaleX, scaleY);
   const radius = worldRadiusToCanvasRadius(144, scaleX, scaleY);
   const progress = durationSeconds > 0 ? clamp(elapsedSeconds / durationSeconds, 0, 1) : 0;
-  const teamColor = Number.isFinite(Number(throwerTeamNum)) ? getTeamColorHex(Number(throwerTeamNum)) : '#7f8c8d';
+  const palette = typeof resolveGrenadeEffectPalette === 'function'
+    ? resolveGrenadeEffectPalette('smoke', throwerTeamNum)
+    : {
+      fillHex: '#7f8c8d',
+      strokeHex: Number.isFinite(Number(throwerTeamNum)) ? getTeamColorHex(Number(throwerTeamNum)) : '#7f8c8d',
+      tintHex: Number.isFinite(Number(throwerTeamNum)) ? getTeamColorHex(Number(throwerTeamNum)) : '#7f8c8d',
+    };
 
   ctx.save();
   ctx.beginPath();
   ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(127, 140, 141, 0.24)';
+  ctx.fillStyle = hexToRgba(palette.fillHex, 0.24);
   ctx.fill();
-  ctx.fillStyle = hexToRgba(teamColor, 0.14);
+  ctx.fillStyle = hexToRgba(palette.tintHex, 0.14);
   ctx.fill();
   ctx.lineWidth = Math.max(1, 1.6 * unitScale);
-  ctx.strokeStyle = hexToRgba(teamColor, 0.48);
+  ctx.strokeStyle = hexToRgba(palette.strokeHex, 0.48);
   ctx.stroke();
   ctx.beginPath();
   ctx.arc(center.x, center.y, Math.max(4, radius * 0.26), -Math.PI / 2, -Math.PI / 2 - (Math.PI * 2 * progress), true);
@@ -504,7 +514,7 @@ function drawSmokeEventCircle(worldPoint, throwerTeamNum, elapsedSeconds, durati
   ctx.restore();
 }
 
-function drawPulseEventCircle(grenadeType, worldPoint, elapsedSeconds, durationSeconds, scaleX, scaleY, unitScale) {
+function drawPulseEventCircle(grenadeType, worldPoint, elapsedSeconds, durationSeconds, scaleX, scaleY, unitScale, throwerTeamNum = null) {
   if (!worldPoint || elapsedSeconds < 0 || elapsedSeconds > durationSeconds) {
     return;
   }
@@ -513,6 +523,12 @@ function drawPulseEventCircle(grenadeType, worldPoint, elapsedSeconds, durationS
   const progress = clamp(elapsedSeconds / safeDuration, 0, 1);
   const typeKey = normalizeGrenadeType(grenadeType);
   const effectConfig = GRENADE_EFFECT_CONFIG_BY_TYPE[typeKey] || GRENADE_EFFECT_CONFIG_BY_TYPE.he;
+  const palette = typeof resolveGrenadeEffectPalette === 'function'
+    ? resolveGrenadeEffectPalette(typeKey, throwerTeamNum)
+    : {
+      fillHex: getGrenadeColor(typeKey),
+      strokeHex: getGrenadeColor(typeKey),
+    };
   const center = worldToCanvas(worldPoint.x, worldPoint.y, scaleX, scaleY);
   const baseRadius = worldRadiusToCanvasRadius(effectConfig.radiusWorldUnits || 260, scaleX, scaleY);
   const radius = baseRadius * (0.35 + ((1 - progress) * 0.65));
@@ -521,8 +537,41 @@ function drawPulseEventCircle(grenadeType, worldPoint, elapsedSeconds, durationS
   ctx.save();
   ctx.beginPath();
   ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
-  ctx.fillStyle = hexToRgba(getGrenadeColor(typeKey), alpha);
+  ctx.fillStyle = hexToRgba(palette.fillHex, alpha);
   ctx.fill();
+  ctx.lineWidth = Math.max(1, 1.15 * unitScale);
+  ctx.strokeStyle = hexToRgba(palette.strokeHex, Math.min(alpha + 0.18, 0.55));
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawAreaEventCircle(grenadeType, worldPoint, elapsedSeconds, durationSeconds, scaleX, scaleY, unitScale, throwerTeamNum = null) {
+  if (!worldPoint || elapsedSeconds < 0) {
+    return;
+  }
+
+  const safeDuration = Math.max(durationSeconds, 0.01);
+  const progress = clamp(elapsedSeconds / safeDuration, 0, 1);
+  const typeKey = normalizeGrenadeType(grenadeType);
+  const effectConfig = GRENADE_EFFECT_CONFIG_BY_TYPE[typeKey] || GRENADE_EFFECT_CONFIG_BY_TYPE.molotov;
+  const palette = typeof resolveGrenadeEffectPalette === 'function'
+    ? resolveGrenadeEffectPalette(typeKey, throwerTeamNum)
+    : {
+      fillHex: '#f97316',
+      strokeHex: '#fb923c',
+    };
+  const center = worldToCanvas(worldPoint.x, worldPoint.y, scaleX, scaleY);
+  const radius = worldRadiusToCanvasRadius(effectConfig.radiusWorldUnits || 150, scaleX, scaleY);
+  const fade = progress > 0.82 ? clamp(1 - ((progress - 0.82) / 0.18), 0.2, 1) : 1;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
+  ctx.fillStyle = hexToRgba(palette.fillHex, 0.18 * fade);
+  ctx.fill();
+  ctx.lineWidth = Math.max(1, 1.6 * unitScale);
+  ctx.strokeStyle = hexToRgba(palette.strokeHex, 0.72 * fade);
+  ctx.stroke();
   ctx.restore();
 }
 
@@ -575,6 +624,7 @@ function resolveGrenadeEventEffectState(trail, grenadeEventState, safeTick) {
       elapsedSeconds,
       durationSeconds,
       grenadeType: typeKey,
+      throwerTeamNum: eventTeamNum,
     };
   }
 
@@ -589,7 +639,7 @@ function resolveGrenadeEventEffectState(trail, grenadeEventState, safeTick) {
       return null;
     }
     return {
-      kind: 'pulse',
+      kind: 'area',
       active: tickValue >= startTick && (!hasEndTick || tickValue <= endTick),
       hideTrail: tickValue >= startTick,
       trailVisibleUntilTick: startTick,
@@ -706,7 +756,9 @@ function drawGrenadeTrailEndpoint(points, scaleX, scaleY, unitScale) {
 }
 
 function drawGrenadeTrailVisual(trail, visiblePoints, scaleX, scaleY, unitScale) {
-  const color = getGrenadeColor(trail.grenadeType);
+  const color = typeof resolveGrenadeTrailHex === 'function'
+    ? resolveGrenadeTrailHex(trail.grenadeType, trail.throwerTeamNum)
+    : getGrenadeColor(trail.grenadeType);
   ctx.strokeStyle = `${color}cc`;
   ctx.fillStyle = color;
   ctx.lineWidth = Math.max(1, 1.6 * unitScale);
@@ -761,6 +813,19 @@ function drawGrenadeTrailWithEffect(
         scaleX,
         scaleY,
         unitScale,
+        eventEffectState.throwerTeamNum,
+      );
+    }
+    if (eventEffectState.kind === 'area' && eventEffectState.active) {
+      drawAreaEventCircle(
+        eventEffectState.grenadeType || trail.grenadeType,
+        eventEffectState.point,
+        eventEffectState.elapsedSeconds,
+        eventEffectState.durationSeconds,
+        scaleX,
+        scaleY,
+        unitScale,
+        eventEffectState.throwerTeamNum,
       );
     }
   }
@@ -1124,15 +1189,47 @@ function getPlayerTeamColor(player) {
   return Number(player?.team_num) === TEAM_NUM_T ? '#facc15' : '#38bdf8';
 }
 
+function getTeamPanelHeaderHeight(panelRect) {
+  return clamp(panelRect.height * 0.055, HUD_TEAM_HEADER_MIN_HEIGHT, HUD_TEAM_HEADER_MAX_HEIGHT);
+}
+
+function getTeamPanelHeaderGap(panelRect) {
+  return Math.max(1, Math.round(panelRect.height * 0.0015));
+}
+
+function buildTeamPanelHeaderRect(panelRect, firstSlotRect = null) {
+  const inset = 1;
+  const headerHeight = getTeamPanelHeaderHeight(panelRect);
+  const fallbackWidth = Math.max(1, panelRect.width - (inset * 2));
+  const width = firstSlotRect ? firstSlotRect.width : fallbackWidth;
+  const x = firstSlotRect ? firstSlotRect.x : (panelRect.x + inset);
+  const defaultY = panelRect.y + inset;
+  const anchoredY = firstSlotRect
+    ? (firstSlotRect.y - getTeamPanelHeaderGap(panelRect) - headerHeight)
+    : defaultY;
+  return {
+    x,
+    y: Math.max(defaultY, anchoredY),
+    width,
+    height: headerHeight,
+  };
+}
+
 function buildTeamSlotRects(panelRect) {
   const inset = 1;
+  const headerHeight = getTeamPanelHeaderHeight(panelRect);
+  const headerGap = getTeamPanelHeaderGap(panelRect);
   const bodyX = panelRect.x + inset;
   const bodyY = panelRect.y + inset;
   const bodyWidth = Math.max(1, panelRect.width - (inset * 2));
   const bodyHeight = Math.max(1, panelRect.height - (inset * 2));
-  const slotHeight = clamp(bodyHeight * 0.13, HUD_PLAYER_SLOT_MIN_HEIGHT, HUD_PLAYER_SLOT_MAX_HEIGHT);
-  const totalHeight = (slotHeight * HUD_PLAYER_SLOTS) + (HUD_PLAYER_SLOT_GAP * (HUD_PLAYER_SLOTS - 1));
-  const startY = bodyY + ((bodyHeight - totalHeight) / 2);
+  const slotHeight = typeof getHudTeamSlotHeight === 'function'
+    ? getHudTeamSlotHeight(bodyHeight)
+    : clamp(bodyHeight * 0.1, 48, 60);
+  const totalSlotsHeight = (slotHeight * HUD_PLAYER_SLOTS) + (HUD_PLAYER_SLOT_GAP * (HUD_PLAYER_SLOTS - 1));
+  const contentHeight = totalSlotsHeight + headerHeight + headerGap;
+  const offsetY = Math.max((bodyHeight - contentHeight) / 2, 0);
+  const startY = bodyY + offsetY + headerHeight + headerGap;
   const slots = [];
 
   for (let slotIndex = 0; slotIndex < HUD_PLAYER_SLOTS; slotIndex += 1) {
@@ -1141,6 +1238,55 @@ function buildTeamSlotRects(panelRect) {
   }
 
   return slots;
+}
+
+function resolveTeamPanelDisplayMeta(teamNum, displayMeta = null) {
+  return {
+    name: typeof resolveTeamPanelDisplayName === 'function'
+      ? resolveTeamPanelDisplayName(teamNum, displayMeta, TEAM_PANEL_FALLBACK_NAME_BY_TEAM)
+      : (String(displayMeta?.name || '').trim() || TEAM_PANEL_FALLBACK_NAME_BY_TEAM[teamNum] || 'Unknown'),
+    score: Number.isFinite(Number(displayMeta?.score)) ? Math.floor(Number(displayMeta.score)) : null,
+  };
+}
+
+function drawTeamPanelHeader(panelRect, firstSlotRect, teamNum, displayMeta, unitScale) {
+  const headerRect = buildTeamPanelHeaderRect(panelRect, firstSlotRect);
+  const teamColor = getTeamColorHex(teamNum);
+  const textLayout = typeof getTeamPanelHeaderTextLayout === 'function'
+    ? getTeamPanelHeaderTextLayout(headerRect, unitScale)
+    : {
+      textX: headerRect.x + Math.max(8, 7 * unitScale),
+      textWidth: Math.max(12, headerRect.width - (Math.max(8, 7 * unitScale) * 2)),
+    };
+  const meta = resolveTeamPanelDisplayMeta(teamNum, displayMeta);
+
+  ctx.save();
+  drawRoundedRectPath(
+    headerRect.x,
+    headerRect.y,
+    headerRect.width,
+    headerRect.height,
+    Math.max(6, 5 * unitScale),
+  );
+  ctx.fillStyle = hexToRgba(teamColor, 0.12);
+  ctx.fill();
+  ctx.lineWidth = Math.max(1, 1.1 * unitScale);
+  ctx.strokeStyle = hexToRgba(teamColor, 0.34);
+  ctx.stroke();
+
+  ctx.fillStyle = teamColor;
+  ctx.font = `700 ${Math.max(11, 10 * unitScale)}px Segoe UI`;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  const headerText = typeof formatTeamPanelHeaderText === 'function'
+    ? formatTeamPanelHeaderText(meta)
+    : meta.name;
+  ctx.fillText(
+    fitTextByWidth(headerText, textLayout.textWidth),
+    textLayout.textX,
+    headerRect.y + (headerRect.height / 2),
+  );
+  ctx.restore();
 }
 
 function normalizePlayerInventoryItems(player) {
@@ -1376,19 +1522,32 @@ function drawTeamSlotHud(player, slotRect, slotIndex, teamNum, unitScale) {
   const money = isEmpty ? '$0' : `$${coerceNonNegativeInteger(player?.balance, 0)}`;
   const primaryWeaponName = isEmpty ? '' : resolvePlayerPrimaryWeapon(player);
   const utilityItems = isEmpty ? [] : getPlayerUtilityInventory(player);
+  const slotMetrics = typeof getHudTeamSlotContentMetrics === 'function'
+    ? getHudTeamSlotContentMetrics(slotRect, unitScale)
+    : {
+      topY: slotRect.y + Math.max(4, 4 * unitScale),
+      barY: slotRect.y + Math.max(4, 4 * unitScale) + Math.max(10, 9 * unitScale),
+      barHeight: Math.max(11, 10 * unitScale),
+      iconRowY: Math.min(
+        slotRect.y + slotRect.height - Math.max(15, 15 * unitScale),
+        slotRect.y + Math.max(4, 4 * unitScale) + Math.max(10, 9 * unitScale) + Math.max(11, 10 * unitScale) + Math.max(3, 3 * unitScale),
+      ),
+      primaryIconSize: Math.max(17, 16 * unitScale),
+      utilityIconSize: Math.max(11, 10 * unitScale),
+      utilityGap: Math.max(2, 2 * unitScale),
+    };
   const barInset = Math.max(2, 2 * unitScale);
-  const barHeight = Math.max(12, 12 * unitScale);
   const contentX = slotRect.x + barInset;
   const contentWidth = Math.max(1, slotRect.width - (barInset * 2));
-  const topY = slotRect.y + Math.max(5, 5 * unitScale);
-  const barY = topY + Math.max(13, 12 * unitScale);
-  const iconRowY = Math.min(
-    slotRect.y + slotRect.height - Math.max(18, 18 * unitScale),
-    barY + barHeight + Math.max(4, 4 * unitScale),
-  );
-  const primaryIconSize = Math.max(18, 17 * unitScale);
-  const utilityIconSize = Math.max(12, 11 * unitScale);
-  const utilityGap = Math.max(2, 2 * unitScale);
+  const {
+    topY,
+    barY,
+    barHeight,
+    iconRowY,
+    primaryIconSize,
+    utilityIconSize,
+    utilityGap,
+  } = slotMetrics;
   const utilityRowY = iconRowY + Math.max(1, ((primaryIconSize - utilityIconSize) / 2));
   const utilityMinX = contentX + primaryIconSize + Math.max(8, 7 * unitScale);
   const barWidth = contentWidth;
@@ -1437,8 +1596,9 @@ function drawTeamSlotHud(player, slotRect, slotIndex, teamNum, unitScale) {
   ctx.restore();
 }
 
-function drawTeamPanelHud(panelRect, teamNum, slots, unitScale) {
+function drawTeamPanelHud(panelRect, teamNum, slots, displayMeta, unitScale) {
   const slotRects = buildTeamSlotRects(panelRect);
+  drawTeamPanelHeader(panelRect, slotRects[0] || null, teamNum, displayMeta, unitScale);
 
   for (let index = 0; index < slotRects.length; index += 1) {
     const slotPlayer = Array.isArray(slots) ? slots[index] : null;
@@ -1585,9 +1745,12 @@ function drawCanvasHud(players, frameIndex, layout, unitScale, renderTick = null
   const slotsByTeam = typeof getHudTeamSlotsForFrame === 'function'
     ? getHudTeamSlotsForFrame(players)
     : { [TEAM_NUM_T]: [], [TEAM_NUM_CT]: [] };
+  const displayMetaByTeam = typeof getHudTeamDisplayMetaForFrame === 'function'
+    ? getHudTeamDisplayMetaForFrame(players)
+    : { [TEAM_NUM_T]: null, [TEAM_NUM_CT]: null };
   drawRoundClockOnCanvas(layout, unitScale, renderTick);
-  drawTeamPanelHud(layout.leftPanel, TEAM_NUM_T, slotsByTeam[TEAM_NUM_T], unitScale);
-  drawTeamPanelHud(layout.rightPanel, TEAM_NUM_CT, slotsByTeam[TEAM_NUM_CT], unitScale);
+  drawTeamPanelHud(layout.leftPanel, TEAM_NUM_T, slotsByTeam[TEAM_NUM_T], displayMetaByTeam[TEAM_NUM_T], unitScale);
+  drawTeamPanelHud(layout.rightPanel, TEAM_NUM_CT, slotsByTeam[TEAM_NUM_CT], displayMetaByTeam[TEAM_NUM_CT], unitScale);
   drawKillFeedHud(frameIndex, layout, unitScale);
 }
 

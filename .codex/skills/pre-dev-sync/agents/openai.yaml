@@ -1,4 +1,0 @@
-interface:
-  display_name: "CS2DemoPlayer Pre-Dev Sync"
-  short_description: "Load CS2DemoPlayer context using the current workday Daily"
-  default_prompt: "Use $pre-dev-sync to load CS2DemoPlayer context from the repo and matching Obsidian pages before coding, using an 08:00 local-time cutoff for the workday Daily."

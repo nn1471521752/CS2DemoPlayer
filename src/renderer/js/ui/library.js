@@ -89,6 +89,7 @@ function applyDemoResponseToUi(response) {
   currentTickrate = coercePositiveNumber(response.tickrate, DEFAULT_TICKRATE);
   currentRoundStartTick = 0;
   currentRoundEndTick = 0;
+  currentRoundTeamDisplayByTeam = {};
   resetRoundBombClockState();
   resetParsedRoundClockStates();
   framesData = [];
@@ -341,14 +342,25 @@ function beginRoundLoad(roundIndex, roundNumber) {
 }
 
 function applyRoundResponseFrameState(round, response) {
+  const playbackBounds = typeof resolveRoundPlaybackBounds === 'function'
+    ? resolveRoundPlaybackBounds(round, response)
+    : {
+      startTick: Number(response?.start_tick ?? round?.start_tick) || 0,
+      endTick: Number(response?.end_tick ?? round?.end_tick ?? response?.start_tick ?? round?.start_tick) || 0,
+    };
   currentTickrate = coercePositiveNumber(response.tickrate, currentTickrate);
   currentDemoCachedRoundsCount = coerceNonNegativeInteger(
     response.cachedRoundsCount,
     currentDemoCachedRoundsCount,
   );
-  currentRoundStartTick = Number(round.start_tick) || 0;
-  currentRoundEndTick = Number(round.end_tick) || currentRoundStartTick;
-  framesData = response.frames || [];
+  currentRoundStartTick = playbackBounds.startTick;
+  currentRoundEndTick = playbackBounds.endTick;
+  currentRoundTeamDisplayByTeam = (
+    response?.team_display && typeof response.team_display === 'object'
+      ? response.team_display
+      : (response?.teamDisplay && typeof response.teamDisplay === 'object' ? response.teamDisplay : {})
+  );
+  framesData = Array.isArray(response.frames) ? response.frames : [];
   applyParsedRoundClockStates(framesData);
   applyRoundBombClockState(round, response, framesData);
   currentFrameIndex = 0;
@@ -432,6 +444,13 @@ function isSuccessRoundResponse(response) {
   return response && response.status === 'success' && Array.isArray(response.frames);
 }
 
+function isPlayableRoundResponse(response) {
+  if (typeof hasPlayableRoundFrames === 'function') {
+    return hasPlayableRoundFrames(response);
+  }
+  return isSuccessRoundResponse(response) && response.frames.length > 0;
+}
+
 async function loadRoundByIndex(roundIndex) {
   if (isRoundLoading) {
     return;
@@ -465,12 +484,14 @@ async function loadRoundByIndex(roundIndex) {
         break;
       }
 
-      if (isSuccessRoundResponse(response)) {
+      if (isPlayableRoundResponse(response)) {
         break;
       }
 
       const errorDetail = extractRoundErrorDetail(response);
-      const message = response?.message || 'Unknown error';
+      const message = isSuccessRoundResponse(response)
+        ? 'No playable frames returned'
+        : (response?.message || 'Unknown error');
       console.warn(`[Round Retry] round=${round.number} frameStep=${frameStep} failed: ${message}`, response);
 
       if (frameStep !== frameStepCandidates[frameStepCandidates.length - 1]) {
@@ -487,7 +508,7 @@ async function loadRoundByIndex(roundIndex) {
       throw new Error(`Round transport failed after retries: ${invokeError.message}`);
     }
 
-    if (!response || response.status !== 'success') {
+    if (!isPlayableRoundResponse(response)) {
       let positionResponse = null;
       for (const frameStep of frameStepCandidates) {
         try {
@@ -497,14 +518,16 @@ async function loadRoundByIndex(roundIndex) {
           continue;
         }
 
-        if (isSuccessRoundResponse(positionResponse)) {
+        if (isPlayableRoundResponse(positionResponse)) {
           break;
         }
       }
 
-      if (!positionResponse || positionResponse.status !== 'success') {
+      if (!isPlayableRoundResponse(positionResponse)) {
         const errorDetail = extractRoundErrorDetail(response);
-        const message = response?.message || 'Unknown error';
+        const message = isSuccessRoundResponse(response)
+          ? 'Round has no playable frames'
+          : (response?.message || 'Unknown error');
         setStatus(
           errorDetail ? `Round load failed: ${message} (${errorDetail})` : `Round load failed: ${message}`,
           '#e74c3c',

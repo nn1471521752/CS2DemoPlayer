@@ -1142,6 +1142,7 @@ def parse_tick_dataframe_for_ticks(parser, ticks):
             "X",
             "Y",
             "team_num",
+            "team_clan_name",
             "is_alive",
             "yaw",
             "health",
@@ -1153,9 +1154,10 @@ def parse_tick_dataframe_for_ticks(parser, ticks):
             "weapon_name",
             "inventory",
         ],
-        ["X", "Y", "team_num", "is_alive", "yaw", "health", "balance", "steamid", "name", "active_weapon_name", "weapon_name"],
-        ["X", "Y", "team_num", "is_alive", "yaw", "health", "balance", "steamid", "name"],
-        ["X", "Y", "team_num", "is_alive", "yaw", "health", "balance", "name"],
+        ["X", "Y", "team_num", "team_clan_name", "is_alive", "yaw", "health", "balance", "steamid", "name", "active_weapon_name", "weapon_name"],
+        ["X", "Y", "team_num", "team_clan_name", "is_alive", "yaw", "health", "balance", "steamid", "name"],
+        ["X", "Y", "team_num", "team_clan_name", "is_alive", "yaw", "health", "balance", "name"],
+        ["X", "Y", "team_num", "team_clan_name", "is_alive", "yaw"],
         ["X", "Y", "team_num", "is_alive", "yaw"],
     ]
 
@@ -1220,6 +1222,8 @@ def normalize_player_record(player):
         player["team_num"] = team_num
 
     player["name"] = _to_string_or_default(player.get("name"), "")
+    if "team_clan_name" in player:
+        player["team_clan_name"] = _to_string_or_default(player.get("team_clan_name"), "")
 
     if "active_weapon_name" not in player and "weapon_name" in player:
         player["active_weapon_name"] = player.get("weapon_name")
@@ -1274,6 +1278,7 @@ def build_players_by_tick(players_df):
         "user_id",
         "steamid",
         "name",
+        "team_clan_name",
         "active_weapon_name",
         "weapon_name",
         "inventory",
@@ -1745,6 +1750,50 @@ def csv_bool(value):
     return "1" if bool(value) else "0"
 
 
+def build_round_team_display(frames):
+    counts_by_team = {
+        TEAM_NUM_T: {},
+        TEAM_NUM_CT: {},
+    }
+
+    if not isinstance(frames, list):
+        return {}
+
+    for frame in frames:
+        if not isinstance(frame, dict):
+            continue
+
+        players = frame.get("players")
+        if not isinstance(players, list):
+            continue
+
+        for player in players:
+            if not isinstance(player, dict):
+                continue
+
+            team_num = _to_int_or_none(player.get("team_num"))
+            if team_num not in (TEAM_NUM_T, TEAM_NUM_CT):
+                continue
+
+            team_name = _to_string_or_default(player.get("team_clan_name"), "")
+            if not team_name:
+                continue
+
+            team_counts = counts_by_team[team_num]
+            team_counts[team_name] = team_counts.get(team_name, 0) + 1
+
+    display = {}
+    for team_num in (TEAM_NUM_T, TEAM_NUM_CT):
+        team_counts = counts_by_team[team_num]
+        if not team_counts:
+            continue
+
+        name = max(team_counts.items(), key=lambda item: item[1])[0]
+        display[str(team_num)] = {"name": name}
+
+    return display
+
+
 def csv_paths_for_output(output_dir):
     return {
         "players": os.path.join(output_dir, CSV_PLAYERS_FILE),
@@ -1908,6 +1957,7 @@ def create_export_csv_writers(csv_paths):
             "end_tick",
             "tickrate",
             "has_grenades",
+            "team_display_json",
             "frames_count",
             "bomb_planted_tick",
             "bomb_defused_tick",
@@ -2405,6 +2455,7 @@ def run_export_csv_mode(parser, argv, normalized_map_name, raw_map_name, source_
                 frame_step=1,
             )
             attach_clock_states_to_frames(frames, clock_states_by_tick)
+            team_display = build_round_team_display(frames)
             round_counts = write_round_frame_rows(round_number, frames, include_grenades, writers)
             for key in round_counts:
                 row_counts[key] += round_counts[key]
@@ -2415,6 +2466,7 @@ def run_export_csv_mode(parser, argv, normalized_map_name, raw_map_name, source_
                     "end_tick": end_tick,
                     "tickrate": FIXED_TICKRATE,
                     "has_grenades": csv_bool(include_grenades),
+                    "team_display_json": _dumps_json_safe(team_display),
                     "frames_count": len(frames),
                     "bomb_planted_tick": bomb_ticks[0] if bomb_ticks[0] is not None else "",
                     "bomb_defused_tick": bomb_ticks[1] if bomb_ticks[1] is not None else "",
@@ -2551,6 +2603,7 @@ def build_round_result(
     bomb_planted_tick=None,
     bomb_defused_tick=None,
     bomb_exploded_tick=None,
+    team_display=None,
 ):
     return {
         "status": "success",
@@ -2566,6 +2619,7 @@ def build_round_result(
         "bomb_planted_tick": bomb_planted_tick,
         "bomb_defused_tick": bomb_defused_tick,
         "bomb_exploded_tick": bomb_exploded_tick,
+        "team_display": team_display or {},
     }
 
 
@@ -2584,6 +2638,7 @@ def run_round_mode(parser, argv, normalized_map_name, raw_map_name, source_tickr
         include_grenades=include_grenades,
         frame_step=frame_step,
     )
+    team_display = build_round_team_display(frames)
     bomb_planted_tick, bomb_defused_tick, bomb_exploded_tick = extract_bomb_timing_from_frames(frames)
     print(
         _dumps_json_safe(
@@ -2599,6 +2654,7 @@ def run_round_mode(parser, argv, normalized_map_name, raw_map_name, source_tickr
                 bomb_planted_tick=bomb_planted_tick,
                 bomb_defused_tick=bomb_defused_tick,
                 bomb_exploded_tick=bomb_exploded_tick,
+                team_display=team_display,
             )
         )
     )

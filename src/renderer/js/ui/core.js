@@ -228,6 +228,7 @@ let isRoundLoading = false;
 let currentTickrate = DEFAULT_TICKRATE;
 let currentRoundStartTick = 0;
 let currentRoundEndTick = 0;
+let currentRoundTeamDisplayByTeam = {};
 let currentRoundBombPlantedTick = null;
 let currentRoundBombDefusedTick = null;
 let currentRoundBombExplodedTick = null;
@@ -1005,6 +1006,7 @@ function resetCurrentDemoState() {
   activeRoundIndex = -1;
   currentRoundStartTick = 0;
   currentRoundEndTick = 0;
+  currentRoundTeamDisplayByTeam = {};
   resetRoundBombClockState();
   resetParsedRoundClockStates();
   currentTickrate = DEFAULT_TICKRATE;

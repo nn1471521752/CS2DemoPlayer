@@ -323,6 +323,19 @@ function parseJsonArray(value) {
   }
 }
 
+function parseJsonObject(value) {
+  if (typeof value !== 'string' || !value) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (_error) {
+    return {};
+  }
+}
+
 function mapRoundFrameRow(row) {
   return {
     checksum: String(row.checksum),
@@ -331,6 +344,7 @@ function mapRoundFrameRow(row) {
     endTick: toNumber(row.end_tick),
     tickrate: toNumber(row.tickrate, 64),
     hasGrenades: toBoolean(row.has_grenades),
+    teamDisplay: parseJsonObject(String(row.team_display_json || '')),
     framesCount: toNumber(row.frames_count),
     frames: parseJsonArray(String(row.frames_json || '')),
     updatedAt: String(row.updated_at),
@@ -860,6 +874,9 @@ function normalizeRoundFrames(roundFrames) {
       startTick: toNumber(roundFrame.startTick ?? roundFrame.start_tick),
       endTick: toNumber(roundFrame.endTick ?? roundFrame.end_tick),
       tickrate: toNumber(roundFrame.tickrate, 64),
+      teamDisplay: roundFrame.teamDisplay && typeof roundFrame.teamDisplay === 'object'
+        ? roundFrame.teamDisplay
+        : (roundFrame.team_display && typeof roundFrame.team_display === 'object' ? roundFrame.team_display : {}),
       frames: Array.isArray(roundFrame.frames) ? roundFrame.frames : [],
       hasGrenades:
         typeof roundFrame.hasGrenades === 'boolean'
@@ -877,16 +894,18 @@ const UPSERT_ROUND_FRAME_SQL = `
     end_tick,
     tickrate,
     has_grenades,
+    team_display_json,
     frames_json,
     frames_count,
     updated_at
   )
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(checksum, round_number) DO UPDATE SET
     start_tick = excluded.start_tick,
     end_tick = excluded.end_tick,
     tickrate = excluded.tickrate,
     has_grenades = excluded.has_grenades,
+    team_display_json = excluded.team_display_json,
     frames_json = excluded.frames_json,
     frames_count = excluded.frames_count,
     updated_at = excluded.updated_at
@@ -1105,6 +1124,7 @@ async function importRoundMetaCsv(database, checksum, csvFiles, now) {
         toSafeInteger(row.end_tick, 0),
         toFiniteFloat(row.tickrate, 64),
         toSafeInteger(row.has_grenades, 0) > 0 ? 1 : 0,
+        String(row.team_display_json || '{}'),
         '[]',
         Math.max(0, toSafeInteger(row.frames_count, 0)),
         now,
@@ -1432,6 +1452,7 @@ function writeRoundFrames(database, checksum, normalizedRoundFrames, now) {
         roundFrame.endTick,
         roundFrame.tickrate,
         roundFrame.hasGrenades ? 1 : 0,
+        JSON.stringify(roundFrame.teamDisplay || {}),
         JSON.stringify(roundFrame.frames),
         roundFrame.frames.length,
         now,
@@ -1813,6 +1834,7 @@ async function getRoundFrames(checksum, roundNumber) {
         end_tick,
         tickrate,
         has_grenades,
+        team_display_json,
         frames_json,
         frames_count,
         updated_at
