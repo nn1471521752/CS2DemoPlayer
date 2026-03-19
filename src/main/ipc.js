@@ -40,6 +40,12 @@ const {
   getCachedRoundsCount,
   getDebugInfo,
 } = require('./db');
+const {
+  createDefaultHltvService,
+} = require('./hltv-service');
+const {
+  isSupportedDemoPath,
+} = require('./demo-path-utils');
 
 const projectRoot = path.resolve(__dirname, '../..');
 const pythonScript = path.join(__dirname, '../python/engine.py');
@@ -51,6 +57,7 @@ let selectedDemoPath = null;
 let selectedDemoChecksum = null;
 let selectedDemoFileStats = null;
 const roundCacheUpgradeJobs = new Map();
+const hltvService = createDefaultHltvService();
 
 function resolveVenvPython(rootPath) {
   const candidates = [
@@ -717,6 +724,24 @@ async function handleAnalyzeDemo() {
     return await performAnalyzeDemo();
   } catch (error) {
     return buildAnalyzeError(`Failed to import demo: ${error.message}`, { demoPath: selectedDemoPath });
+  }
+}
+
+async function handleAnalyzeDemoFromPath(_event, payload = {}) {
+  const demoPath = String(payload?.demoPath || '').trim();
+  if (!isSupportedDemoPath(demoPath)) {
+    return buildAnalyzeError('Unsupported demo file path. Expected a .dem file.', { demoPath });
+  }
+
+  if (!fs.existsSync(demoPath)) {
+    return buildAnalyzeError(`Demo file does not exist on disk: ${demoPath}`, { demoPath });
+  }
+
+  resetSelection(demoPath);
+  try {
+    return await performAnalyzeDemo();
+  } catch (error) {
+    return buildAnalyzeError(`Failed to import demo: ${error.message}`, { demoPath });
   }
 }
 
@@ -1719,12 +1744,23 @@ async function handleAnalyzeDemoRoundPositions(event, payload = {}) {
   );
 }
 
+async function handleHltvListRecentMatches() {
+  return hltvService.fetchRecentMatches();
+}
+
+async function handleHltvDownloadDemo(_event, payload = {}) {
+  return hltvService.downloadDemoForMatch(payload);
+}
+
 ipcMain.handle('analyze-demo', handleAnalyzeDemo);
+ipcMain.handle('analyze-demo-from-path', handleAnalyzeDemoFromPath);
 ipcMain.handle('parse-current-demo', handleParseCurrentDemo);
 ipcMain.handle('db-debug-info', handleDbDebugInfo);
 ipcMain.handle('demo-library-list', handleDemoLibraryList);
 ipcMain.handle('demo-library-rename', handleDemoLibraryRename);
 ipcMain.handle('demo-library-delete', handleDemoLibraryDelete);
 ipcMain.handle('load-demo-from-db', handleLoadDemoFromDb);
+ipcMain.handle('hltv-list-recent-matches', handleHltvListRecentMatches);
+ipcMain.handle('hltv-download-demo', handleHltvDownloadDemo);
 ipcMain.handle('analyze-demo-round', handleAnalyzeDemoRound);
 ipcMain.handle('analyze-demo-round-positions', handleAnalyzeDemoRoundPositions);
