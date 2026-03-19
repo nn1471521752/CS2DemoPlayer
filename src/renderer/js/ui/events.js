@@ -330,6 +330,10 @@ if (demoList) {
 function beginDemoImportUiState() {
   btnOpen.disabled = true;
   btnOpen.innerText = 'Loading...';
+  if (btnHomeImportDemo) {
+    btnHomeImportDemo.disabled = true;
+    btnHomeImportDemo.innerText = 'Loading...';
+  }
   hideDemoContextMenu();
   resetParseJobProgress();
   setStatus('Extracting timeline data from demo, please wait...', '#f39c12');
@@ -374,6 +378,10 @@ async function applyDemoImportSuccess(response) {
 function endDemoImportUiState() {
   btnOpen.disabled = false;
   btnOpen.innerText = defaultOpenButtonText;
+  if (btnHomeImportDemo) {
+    btnHomeImportDemo.disabled = false;
+    btnHomeImportDemo.innerText = defaultOpenButtonText;
+  }
 }
 
 async function handleOpenDemoClick() {
@@ -405,6 +413,10 @@ async function handleOpenDemoClick() {
 // --- 4) Import button ---
 if (btnOpen) {
   btnOpen.addEventListener('click', handleOpenDemoClick);
+}
+
+if (btnHomeImportDemo) {
+  btnHomeImportDemo.addEventListener('click', handleOpenDemoClick);
 }
 
 // Initial UI state

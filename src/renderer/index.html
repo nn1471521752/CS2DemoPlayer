@@ -36,25 +36,38 @@
 
       <section id="home-content" class="home-content">
         <section id="demo-library-page" class="home-page">
-          <aside class="library-panel home-library-panel">
-            <div class="library-header">
-              <h3>Stored Demos</h3>
-              <button id="btn-refresh-demos" type="button">Refresh</button>
-            </div>
-            <div id="demo-list" class="demo-list">
-              <div class="demo-empty">No demos in database</div>
-            </div>
-            <div id="parse-job-progress" class="parse-job-progress is-hidden">
-              <div class="parse-job-header">
-                <span id="parse-job-text">Idle</span>
-                <span id="parse-job-percent">0%</span>
+          <div class="page-shell demo-library-page-shell">
+            <div class="page-header">
+              <div class="page-header-copy">
+                <div class="page-eyebrow">Local Workspace</div>
+                <h3>Demo 库</h3>
+                <p class="page-subtitle">浏览本地 demo，进入回放，或从 HLTV 获取比赛后回到这里继续处理。</p>
               </div>
-              <div class="parse-job-bar">
-                <div id="parse-job-bar-fill" class="parse-job-bar-fill"></div>
+              <div class="page-header-actions">
+                <button id="btn-home-import-demo" type="button">Import Demo (.dem)</button>
+                <button id="btn-refresh-demos" type="button">Refresh</button>
               </div>
-              <div id="parse-job-meta" class="parse-job-meta">Waiting...</div>
             </div>
-          </aside>
+
+            <div id="demo-library-summary" class="page-summary-strip"></div>
+
+            <aside class="library-panel home-library-panel">
+              <div class="library-section-label">Local demos</div>
+              <div id="demo-list" class="demo-list">
+                <div class="demo-empty">No demos in database</div>
+              </div>
+              <div id="parse-job-progress" class="parse-job-progress is-hidden">
+                <div class="parse-job-header">
+                  <span id="parse-job-text">Idle</span>
+                  <span id="parse-job-percent">0%</span>
+                </div>
+                <div class="parse-job-bar">
+                  <div id="parse-job-bar-fill" class="parse-job-bar-fill"></div>
+                </div>
+                <div id="parse-job-meta" class="parse-job-meta">Waiting...</div>
+              </div>
+            </aside>
+          </div>
         </section>
 
         <section id="hltv-page" class="home-page is-hidden">
@@ -111,6 +124,7 @@
   <script src="js/ui/team-side-lock-utils.js"></script>
   <script src="js/ui/team-panel-header-utils.js"></script>
   <script src="js/ui/hud-slot-layout-utils.js"></script>
+  <script src="js/ui/demo-library-page-utils.js"></script>
   <script src="js/ui/library.js"></script>
   <script src="js/ui/hud.js"></script>
   <script src="js/ui/grenade-visual-utils.js"></script>

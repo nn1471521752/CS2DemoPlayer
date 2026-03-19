@@ -5,6 +5,57 @@ function createDemoLibraryPlaceholder(message) {
   return node;
 }
 
+function createDemoLibraryEmptyState() {
+  const node = document.createElement('div');
+  node.className = 'demo-empty-state';
+  node.innerHTML = `
+    <div class="demo-empty-state-title">还没有本地 Demo</div>
+    <div class="demo-empty-state-copy">先导入本地 .dem，或者到 HLTV 页面抓最近比赛再回到这里继续处理。</div>
+  `;
+
+  const actionButton = document.createElement('button');
+  actionButton.type = 'button';
+  actionButton.className = 'demo-empty-state-action';
+  actionButton.innerText = 'Import Demo (.dem)';
+  actionButton.addEventListener('click', () => {
+    if (btnHomeImportDemo) {
+      btnHomeImportDemo.click();
+      return;
+    }
+    if (btnOpen) {
+      btnOpen.click();
+    }
+  });
+  node.appendChild(actionButton);
+  return node;
+}
+
+function renderDemoLibrarySummary() {
+  if (!demoLibrarySummaryElement) {
+    return;
+  }
+
+  const summary = buildDemoLibrarySummary(demoLibraryData);
+  demoLibrarySummaryElement.innerHTML = `
+    <div class="summary-card">
+      <span class="summary-card-label">Total demos</span>
+      <span class="summary-card-value">${escapeHtml(String(summary.total))}</span>
+    </div>
+    <div class="summary-card">
+      <span class="summary-card-label">Full cache</span>
+      <span class="summary-card-value">${escapeHtml(String(summary.parsed))}</span>
+    </div>
+    <div class="summary-card">
+      <span class="summary-card-label">Partial cache</span>
+      <span class="summary-card-value">${escapeHtml(String(summary.partial))}</span>
+    </div>
+    <div class="summary-card">
+      <span class="summary-card-label">Unparsed</span>
+      <span class="summary-card-value">${escapeHtml(String(summary.unparsed))}</span>
+    </div>
+  `;
+}
+
 const ROUND_ECONOMY_TEXT_BY_CODE = Object.freeze({
   pistol: '手枪局',
   eco: 'ECO局',
@@ -58,6 +109,7 @@ function renderDemoLibrary() {
 
   hideDemoContextMenu();
   demoList.innerHTML = '';
+  renderDemoLibrarySummary();
 
   if (isDemoLibraryLoading) {
     demoList.appendChild(createDemoLibraryPlaceholder('Loading demos...'));
@@ -65,7 +117,7 @@ function renderDemoLibrary() {
   }
 
   if (!Array.isArray(demoLibraryData) || demoLibraryData.length === 0) {
-    demoList.appendChild(createDemoLibraryPlaceholder('No demos in database'));
+    demoList.appendChild(createDemoLibraryEmptyState());
     return;
   }
 
@@ -90,6 +142,7 @@ function applyDemoResponseToUi(response) {
   currentRoundStartTick = 0;
   currentRoundEndTick = 0;
   currentRoundTeamDisplayByTeam = {};
+  currentTeamPanelSideLock = { leftTeamName: '', rightTeamName: '' };
   resetRoundBombClockState();
   resetParsedRoundClockStates();
   framesData = [];
@@ -360,6 +413,9 @@ function applyRoundResponseFrameState(round, response) {
       ? response.team_display
       : (response?.teamDisplay && typeof response.teamDisplay === 'object' ? response.teamDisplay : {})
   );
+  if (typeof lockTeamPanelSides === 'function') {
+    currentTeamPanelSideLock = lockTeamPanelSides(currentTeamPanelSideLock, currentRoundTeamDisplayByTeam);
+  }
   framesData = Array.isArray(response.frames) ? response.frames : [];
   applyParsedRoundClockStates(framesData);
   applyRoundBombClockState(round, response, framesData);
