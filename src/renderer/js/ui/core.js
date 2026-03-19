@@ -4,8 +4,15 @@ const { CS2_MAP_META } = require('./js/map-meta');
 // --- 1) DOM ---
 const homeView = document.getElementById('home-view');
 const replayView = document.getElementById('replay-view');
+const homeShell = document.getElementById('home-shell');
+const homeNav = document.getElementById('home-nav');
+const homeNavItems = document.getElementById('home-nav-items');
+const homeContent = document.getElementById('home-content');
+const demoLibraryPage = document.getElementById('demo-library-page');
+const hltvPage = document.getElementById('hltv-page');
 const btnOpen = document.getElementById('btn-open');
 const btnBackHome = document.getElementById('btn-back-home');
+const btnHomeNavToggle = document.getElementById('btn-home-nav-toggle');
 const statusText = document.getElementById('status-text');
 const replayTitle = document.getElementById('replay-title');
 const canvas = document.getElementById('radar-canvas');
@@ -26,9 +33,19 @@ const parseJobTextElement = document.getElementById('parse-job-text');
 const parseJobPercentElement = document.getElementById('parse-job-percent');
 const parseJobBarFillElement = document.getElementById('parse-job-bar-fill');
 const parseJobMetaElement = document.getElementById('parse-job-meta');
+const btnHltvRefresh = document.getElementById('btn-hltv-refresh');
+const hltvStatusElement = document.getElementById('hltv-status');
+const hltvMatchListElement = document.getElementById('hltv-match-list');
 
 const defaultOpenButtonText = btnOpen.innerText;
 const defaultParseButtonText = btnParseDb ? btnParseDb.innerText : 'Parse & Save To DB';
+const DEFAULT_HOME_SECTION_ID = (
+  typeof HOME_SECTION_IDS !== 'undefined'
+  && HOME_SECTION_IDS
+  && HOME_SECTION_IDS.demoLibrary
+)
+  ? HOME_SECTION_IDS.demoLibrary
+  : 'demo-library';
 
 // --- 2) Map + radar state ---
 const DEFAULT_TICKRATE = 64;
@@ -229,6 +246,7 @@ let currentTickrate = DEFAULT_TICKRATE;
 let currentRoundStartTick = 0;
 let currentRoundEndTick = 0;
 let currentRoundTeamDisplayByTeam = {};
+let currentTeamPanelSideLock = { leftTeamName: '', rightTeamName: '' };
 let currentRoundBombPlantedTick = null;
 let currentRoundBombDefusedTick = null;
 let currentRoundBombExplodedTick = null;
@@ -249,6 +267,8 @@ let isDemoRenaming = false;
 let isDemoDeleting = false;
 let currentContextMenuChecksum = '';
 let currentView = 'home';
+let currentHomeSectionId = DEFAULT_HOME_SECTION_ID;
+let isHomeNavCollapsed = false;
 let parseJobProgressState = {
   stage: 'idle',
   percent: 0,
@@ -909,6 +929,9 @@ function showHomeView() {
   if (btnBackHome) {
     btnBackHome.classList.add('is-hidden');
   }
+  if (typeof syncHomeShellState === 'function') {
+    syncHomeShellState();
+  }
   hideDemoContextMenu();
 }
 
@@ -1007,6 +1030,7 @@ function resetCurrentDemoState() {
   currentRoundStartTick = 0;
   currentRoundEndTick = 0;
   currentRoundTeamDisplayByTeam = {};
+  currentTeamPanelSideLock = { leftTeamName: '', rightTeamName: '' };
   resetRoundBombClockState();
   resetParsedRoundClockStates();
   currentTickrate = DEFAULT_TICKRATE;

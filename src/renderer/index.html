@@ -16,26 +16,61 @@
     </div>
   </div>
 
-  <div id="home-view" class="view">
-    <aside class="library-panel home-library-panel">
-      <div class="library-header">
-        <h3>Stored Demos</h3>
-        <button id="btn-refresh-demos" type="button">Refresh</button>
-      </div>
-      <div id="demo-list" class="demo-list">
-        <div class="demo-empty">No demos in database</div>
-      </div>
-      <div id="parse-job-progress" class="parse-job-progress is-hidden">
-        <div class="parse-job-header">
-          <span id="parse-job-text">Idle</span>
-          <span id="parse-job-percent">0%</span>
+  <div id="home-view" class="view home-shell-view">
+    <div id="home-shell" class="home-shell">
+      <aside id="home-nav" class="home-nav">
+        <div class="home-nav-brand">
+          <div class="home-nav-brand-mark">CS2</div>
+          <div class="home-nav-brand-copy">
+            <div class="home-nav-brand-title">Demo Player</div>
+            <div class="home-nav-brand-subtitle">Tactical Workspace</div>
+          </div>
+          <button id="btn-home-nav-toggle" type="button" aria-label="Toggle navigation">Collapse</button>
         </div>
-        <div class="parse-job-bar">
-          <div id="parse-job-bar-fill" class="parse-job-bar-fill"></div>
+        <div id="home-nav-items" class="home-nav-items"></div>
+        <div class="home-nav-footer">
+          <div class="home-nav-footer-label">Database</div>
+          <div id="db-info" class="db-info-panel"></div>
         </div>
-        <div id="parse-job-meta" class="parse-job-meta">Waiting...</div>
-      </div>
-    </aside>
+      </aside>
+
+      <section id="home-content" class="home-content">
+        <section id="demo-library-page" class="home-page">
+          <aside class="library-panel home-library-panel">
+            <div class="library-header">
+              <h3>Stored Demos</h3>
+              <button id="btn-refresh-demos" type="button">Refresh</button>
+            </div>
+            <div id="demo-list" class="demo-list">
+              <div class="demo-empty">No demos in database</div>
+            </div>
+            <div id="parse-job-progress" class="parse-job-progress is-hidden">
+              <div class="parse-job-header">
+                <span id="parse-job-text">Idle</span>
+                <span id="parse-job-percent">0%</span>
+              </div>
+              <div class="parse-job-bar">
+                <div id="parse-job-bar-fill" class="parse-job-bar-fill"></div>
+              </div>
+              <div id="parse-job-meta" class="parse-job-meta">Waiting...</div>
+            </div>
+          </aside>
+        </section>
+
+        <section id="hltv-page" class="home-page is-hidden">
+          <aside class="library-panel hltv-page-panel">
+            <div class="library-header">
+              <h3>HLTV</h3>
+              <button id="btn-hltv-refresh" type="button">Fetch Recent Matches</button>
+            </div>
+            <div id="hltv-status" class="demo-empty">Ready to fetch recent matches.</div>
+            <div id="hltv-match-list" class="demo-list">
+              <div class="demo-empty">No recent matches loaded.</div>
+            </div>
+          </aside>
+        </section>
+      </section>
+    </div>
   </div>
 
   <div id="replay-view" class="view is-hidden">
@@ -68,9 +103,12 @@
     <button id="demo-context-delete" class="demo-context-item danger" type="button" role="menuitem">Delete</button>
   </div>
 
+  <script src="js/ui/home-shell-state-utils.js"></script>
   <script src="js/ui/core.js"></script>
+  <script src="js/ui/home-shell.js"></script>
   <script src="js/ui/weapon-icons.js"></script>
   <script src="js/ui/round-playback-utils.js"></script>
+  <script src="js/ui/team-side-lock-utils.js"></script>
   <script src="js/ui/team-panel-header-utils.js"></script>
   <script src="js/ui/hud-slot-layout-utils.js"></script>
   <script src="js/ui/library.js"></script>

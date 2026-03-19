@@ -22,6 +22,34 @@ if (btnBackHome) {
   });
 }
 
+if (btnHomeNavToggle) {
+  btnHomeNavToggle.addEventListener('click', () => {
+    isHomeNavCollapsed = toggleHomeNavCollapsed(isHomeNavCollapsed);
+    if (typeof syncHomeShellState === 'function') {
+      syncHomeShellState();
+    }
+  });
+}
+
+if (homeNavItems) {
+  homeNavItems.addEventListener('click', (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      return;
+    }
+
+    const button = target.closest('[data-home-section-id]');
+    if (!button) {
+      return;
+    }
+
+    const sectionId = button.getAttribute('data-home-section-id');
+    if (typeof showHomeSection === 'function') {
+      showHomeSection(sectionId);
+    }
+  });
+}
+
 ipcRenderer.on('parse-progress', (_event, payload = {}) => {
   updateParseJobProgress(payload);
 });
@@ -393,5 +421,8 @@ syncPlayToggleButtonState();
 renderDbInfoPanel();
 refreshDbInfo();
 refreshDemoLibrary();
+if (typeof syncHomeShellState === 'function') {
+  syncHomeShellState();
+}
 showHomeView();
 
