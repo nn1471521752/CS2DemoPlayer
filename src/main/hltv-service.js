@@ -23,7 +23,6 @@ const {
 const DEFAULT_HLTV_BASE_URL = 'https://www.hltv.org';
 const DEFAULT_HLTV_RECENT_MATCH_LIMIT = 8;
 const DEFAULT_HLTV_TIMEOUT_MS = 30000;
-const DEFAULT_HLTV_HEADLESS = process.env.HLTV_HEADLESS === '1';
 const EDGE_EXECUTABLE_CANDIDATES = Object.freeze([
   'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
   'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
@@ -33,14 +32,41 @@ function normalizeText(value) {
   return String(value || '').trim();
 }
 
+function resolveDefaultHltvHeadless(envLike = process.env) {
+  return normalizeText(envLike?.HLTV_HEADLESS) !== '0';
+}
+
 function normalizeMatchMeta(matchMeta = {}) {
-  return {
+  const normalizedMatchMeta = {
     matchId: normalizeText(matchMeta.matchId),
     matchUrl: normalizeText(matchMeta.matchUrl),
     team1Name: normalizeText(matchMeta.team1Name),
     team2Name: normalizeText(matchMeta.team2Name),
     eventName: normalizeText(matchMeta.eventName),
   };
+
+  const team1Score = Number.isFinite(Number(matchMeta.team1Score)) ? Number(matchMeta.team1Score) : null;
+  const team2Score = Number.isFinite(Number(matchMeta.team2Score)) ? Number(matchMeta.team2Score) : null;
+  const matchFormat = normalizeText(matchMeta.matchFormat);
+  const matchTimeLabel = normalizeText(matchMeta.matchTimeLabel);
+
+  if (team1Score !== null) {
+    normalizedMatchMeta.team1Score = team1Score;
+  }
+  if (team2Score !== null) {
+    normalizedMatchMeta.team2Score = team2Score;
+  }
+  if (matchFormat) {
+    normalizedMatchMeta.matchFormat = matchFormat;
+  }
+  if (matchTimeLabel) {
+    normalizedMatchMeta.matchTimeLabel = matchTimeLabel;
+  }
+  if (typeof matchMeta.hasDemo === 'boolean') {
+    normalizedMatchMeta.hasDemo = matchMeta.hasDemo;
+  }
+
+  return normalizedMatchMeta;
 }
 
 function normalizePlayableDemoPaths(paths) {
@@ -89,6 +115,44 @@ function resolveHltvExecutablePath(preferredExecutablePath = '') {
   return '';
 }
 
+async function listRecentMatchesFromPage(page, options = {}) {
+  if (!page || typeof page.goto !== 'function') {
+    throw new Error('A Playwright page is required');
+  }
+
+  await page.goto(options.resultsUrl, { waitUntil: 'domcontentloaded' });
+  await page.waitForLoadState('domcontentloaded');
+  const pageSnapshot = {
+    title: await page.title(),
+    html: await page.content(),
+    url: page.url(),
+  };
+  const pageState = classifyResultsPageState(pageSnapshot);
+  if (!pageState.ok) {
+    return {
+      ok: false,
+      reason: pageState.reason,
+      detail: normalizeText(pageSnapshot.title),
+    };
+  }
+
+  const matches = listRecentMatches({
+    html: pageSnapshot.html,
+    baseUrl: options.baseUrl,
+    limit: options.limit,
+  });
+
+  if (matches.length === 0) {
+    return {
+      ok: false,
+      reason: 'selector_mismatch',
+      detail: 'no recent HLTV match links found on results page',
+    };
+  }
+
+  return matches;
+}
+
 async function listRecentMatchesWithBrowser(options = {}) {
   const session = await createHltvBrowserSession({
     headless: options.headless,
@@ -97,37 +161,7 @@ async function listRecentMatchesWithBrowser(options = {}) {
   });
 
   try {
-    await session.page.goto(options.resultsUrl, { waitUntil: 'domcontentloaded' });
-    await session.page.waitForLoadState('domcontentloaded');
-    const pageSnapshot = {
-      title: await session.page.title(),
-      html: await session.page.content(),
-      url: session.page.url(),
-    };
-    const pageState = classifyResultsPageState(pageSnapshot);
-    if (!pageState.ok) {
-      return {
-        ok: false,
-        reason: pageState.reason,
-        detail: normalizeText(pageSnapshot.title),
-      };
-    }
-
-    const matches = listRecentMatches({
-      html: pageSnapshot.html,
-      baseUrl: options.baseUrl,
-      limit: options.limit,
-    });
-
-    if (matches.length === 0) {
-      return {
-        ok: false,
-        reason: 'selector_mismatch',
-        detail: 'no recent HLTV match links found on results page',
-      };
-    }
-
-    return matches;
+    return await listRecentMatchesFromPage(session.page, options);
   } finally {
     await session.close();
   }
@@ -231,7 +265,7 @@ function createHltvService(dependencies = {}) {
 
 function createDefaultHltvService(options = {}) {
   const executablePath = resolveHltvExecutablePath(options.executablePath);
-  const headless = options.headless ?? DEFAULT_HLTV_HEADLESS;
+  const headless = options.headless ?? resolveDefaultHltvHeadless(process.env);
   const timeoutMs = Number(options.timeoutMs) || DEFAULT_HLTV_TIMEOUT_MS;
   const baseTempDir = normalizeText(options.baseTempDir) || os.tmpdir();
   const baseUrl = normalizeText(options.baseUrl) || DEFAULT_HLTV_BASE_URL;
@@ -260,7 +294,9 @@ module.exports = {
   createDefaultHltvService,
   createHltvService,
   downloadAndExtractMatchDemo,
+  listRecentMatchesFromPage,
   listRecentMatchesWithBrowser,
   normalizeMatchMeta,
+  resolveDefaultHltvHeadless,
   resolveHltvExecutablePath,
 };

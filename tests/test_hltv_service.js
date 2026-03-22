@@ -2,7 +2,88 @@ const assert = require('assert');
 
 const {
   createHltvService,
+  listRecentMatchesFromPage,
+  resolveDefaultHltvHeadless,
 } = require('../src/main/hltv-service.js');
+
+assert.strictEqual(
+  resolveDefaultHltvHeadless({}),
+  true,
+  'should default HLTV browser sessions to headless mode',
+);
+
+assert.strictEqual(
+  resolveDefaultHltvHeadless({ HLTV_HEADLESS: '0' }),
+  false,
+  'should allow explicitly disabling headless mode via env override',
+);
+
+assert.strictEqual(
+  resolveDefaultHltvHeadless({ HLTV_HEADLESS: '1' }),
+  true,
+  'should keep headless mode enabled when env override is on',
+);
+
+(async () => {
+  const fakePageCalls = [];
+  const fakePage = {
+    async goto(url, options) {
+      fakePageCalls.push(['goto', url, options?.waitUntil || '']);
+    },
+    async waitForLoadState(state) {
+      fakePageCalls.push(['waitForLoadState', state]);
+    },
+    async title() {
+      return 'Results | HLTV.org';
+    },
+    async content() {
+      return `
+        <a href="/matches/2391755/nrg-vs-b8-blast-open-rotterdam-2026" class="a-reset">
+          <div class="result">
+            <div class="line-align team1"><div class="team">NRG</div></div>
+            <div class="line-align team2"><div class="team">B8</div></div>
+            <span class="event-name">BLAST Open Rotterdam 2026</span>
+          </div>
+        </a>
+      `;
+    },
+    url() {
+      return 'https://www.hltv.org/results';
+    },
+  };
+
+  const recentMatches = await listRecentMatchesFromPage(fakePage, {
+    baseUrl: 'https://www.hltv.org',
+    resultsUrl: 'https://www.hltv.org/results',
+    limit: 4,
+  });
+
+  assert.deepStrictEqual(
+    recentMatches,
+    [
+      {
+        matchId: '2391755',
+        matchUrl: 'https://www.hltv.org/matches/2391755/nrg-vs-b8-blast-open-rotterdam-2026',
+        team1Name: 'NRG',
+        team2Name: 'B8',
+        eventName: 'BLAST Open Rotterdam 2026',
+      },
+    ],
+    'should fetch and normalize recent matches from an existing Playwright page',
+  );
+
+  assert.deepStrictEqual(
+    fakePageCalls,
+    [
+      ['goto', 'https://www.hltv.org/results', 'domcontentloaded'],
+      ['waitForLoadState', 'domcontentloaded'],
+    ],
+    'should drive the provided page instead of creating its own browser session',
+  );
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
 
 (async () => {
   const calls = [];
@@ -15,7 +96,10 @@ const {
           matchUrl: 'https://www.hltv.org/matches/2390001/a-vs-b',
           team1Name: 'A',
           team2Name: 'B',
+          team1Score: 2,
+          team2Score: 1,
           eventName: 'Event',
+          matchFormat: 'bo3',
         },
       ];
     },
@@ -41,14 +125,17 @@ const {
       status: 'success',
       matches: [
         {
-          matchId: '2390001',
-          matchUrl: 'https://www.hltv.org/matches/2390001/a-vs-b',
-          team1Name: 'A',
-          team2Name: 'B',
-          eventName: 'Event',
-        },
-      ],
-    },
+        matchId: '2390001',
+        matchUrl: 'https://www.hltv.org/matches/2390001/a-vs-b',
+        team1Name: 'A',
+        team2Name: 'B',
+        team1Score: 2,
+        team2Score: 1,
+        eventName: 'Event',
+        matchFormat: 'bo3',
+      },
+    ],
+  },
     'service should expose a renderer-safe recent-match list result',
   );
 
