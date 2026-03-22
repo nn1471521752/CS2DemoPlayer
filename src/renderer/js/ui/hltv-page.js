@@ -4,6 +4,13 @@
   let hltvPageStatus = 'idle';
   let hltvPageStatusDetail = '';
   let hltvMatchItems = [];
+  let hltvVisibleMatchCount = 0;
+  let isRevealingHltvMatches = false;
+
+  function normalizeIntegerValue(value) {
+    const parsedValue = Number.parseInt(String(value ?? '').trim(), 10);
+    return Number.isFinite(parsedValue) ? parsedValue : null;
+  }
 
   function normalizePlayableDemoPaths(paths) {
     return Array.isArray(paths)
@@ -17,7 +24,12 @@
       matchUrl: String(matchItem.matchUrl || '').trim(),
       team1Name: String(matchItem.team1Name || '').trim() || 'Unknown',
       team2Name: String(matchItem.team2Name || '').trim() || 'Unknown',
+      team1Score: normalizeIntegerValue(matchItem.team1Score),
+      team2Score: normalizeIntegerValue(matchItem.team2Score),
       eventName: String(matchItem.eventName || '').trim() || 'Unknown event',
+      matchFormat: String(matchItem.matchFormat || '').trim(),
+      matchTimeLabel: String(matchItem.matchTimeLabel || '').trim(),
+      hasDemo: typeof matchItem.hasDemo === 'boolean' ? matchItem.hasDemo : null,
       downloadedDemoPath: String(matchItem.downloadedDemoPath || '').trim(),
       downloadedFileSize: Number(matchItem.downloadedFileSize) || 0,
       playableDemoPaths: normalizePlayableDemoPaths(matchItem.playableDemoPaths),
@@ -71,6 +83,16 @@
     renderHltvStatus();
   }
 
+  function buildHltvSuccessDetail(matches, fallbackDetail = '') {
+    const normalizedFallback = String(fallbackDetail || '').trim();
+    if (normalizedFallback) {
+      return normalizedFallback;
+    }
+
+    const count = Array.isArray(matches) ? matches.length : 0;
+    return `Loaded ${count} recent matches.`;
+  }
+
   function formatFileSizeLabel(fileSize) {
     const size = Number(fileSize) || 0;
     if (size <= 0) {
@@ -87,6 +109,15 @@
 
   function buildHltvMatchMetaText(matchItem) {
     const parts = [matchItem.eventName];
+    if (matchItem.matchFormat) {
+      parts.push(matchItem.matchFormat.toUpperCase());
+    }
+    if (matchItem.matchTimeLabel) {
+      parts.push(matchItem.matchTimeLabel);
+    }
+    if (matchItem.hasDemo === true) {
+      parts.push('Demo available');
+    }
     const archiveSizeLabel = formatFileSizeLabel(matchItem.downloadedFileSize);
     if (archiveSizeLabel) {
       parts.push(`Archive ${archiveSizeLabel}`);
@@ -94,7 +125,7 @@
     if (matchItem.playableDemoPaths.length > 0) {
       parts.push(`${matchItem.playableDemoPaths.length} demos ready`);
     }
-    return parts.join(' · ');
+    return parts.filter(Boolean).join(' · ');
   }
 
   function getPlayableDemoLabel(demoPath, fallbackIndex) {
@@ -108,25 +139,38 @@
     return parts[parts.length - 1] || `Map ${fallbackIndex + 1}`;
   }
 
-  function createHltvMatchCard(matchItem) {
-    const card = document.createElement('article');
-    card.className = 'hltv-match-card';
+  function createHltvMatchRow(matchItem) {
+    const row = document.createElement('article');
+    row.className = 'hltv-results-row';
 
-    const header = document.createElement('div');
-    header.className = 'hltv-match-card-header';
+    const rowMain = document.createElement('div');
+    rowMain.className = 'hltv-results-row-main';
 
-    const titleWrap = document.createElement('div');
-    titleWrap.className = 'hltv-match-copy';
+    const versus = document.createElement('div');
+    versus.className = 'hltv-results-versus';
 
-    const teams = document.createElement('div');
-    teams.className = 'hltv-match-teams';
-    teams.innerText = `${matchItem.team1Name} vs ${matchItem.team2Name}`;
-    titleWrap.appendChild(teams);
+    const team1 = document.createElement('div');
+    team1.className = 'hltv-results-team is-left';
+    team1.innerText = matchItem.team1Name;
+
+    const score = document.createElement('div');
+    score.className = 'hltv-results-score';
+    score.innerText = formatHltvScoreLabel(matchItem);
+
+    const team2 = document.createElement('div');
+    team2.className = 'hltv-results-team is-right';
+    team2.innerText = matchItem.team2Name;
+
+    versus.appendChild(team1);
+    versus.appendChild(score);
+    versus.appendChild(team2);
 
     const meta = document.createElement('div');
-    meta.className = 'hltv-match-meta';
+    meta.className = 'hltv-results-meta';
     meta.innerText = buildHltvMatchMetaText(matchItem);
-    titleWrap.appendChild(meta);
+
+    const actionWrap = document.createElement('div');
+    actionWrap.className = 'hltv-results-actions';
 
     const primaryAction = document.createElement('button');
     primaryAction.type = 'button';
@@ -135,10 +179,12 @@
     primaryAction.dataset.matchId = matchItem.matchId;
     primaryAction.disabled = matchItem.isDownloading;
     primaryAction.innerText = getHltvActionLabel(matchItem);
+    actionWrap.appendChild(primaryAction);
 
-    header.appendChild(titleWrap);
-    header.appendChild(primaryAction);
-    card.appendChild(header);
+    rowMain.appendChild(versus);
+    rowMain.appendChild(meta);
+    rowMain.appendChild(actionWrap);
+    row.appendChild(rowMain);
 
     if (matchItem.playableDemoPaths.length > 0) {
       const demosWrap = document.createElement('div');
@@ -162,10 +208,22 @@
         demoRow.appendChild(demoAction);
         demosWrap.appendChild(demoRow);
       });
-      card.appendChild(demosWrap);
+      row.appendChild(demosWrap);
     }
 
-    return card;
+    return row;
+  }
+
+  function createHltvBatchFooter() {
+    const footerText = getHltvBatchFooterText(hltvVisibleMatchCount, hltvMatchItems.length);
+    if (!footerText) {
+      return null;
+    }
+
+    const footer = document.createElement('div');
+    footer.className = 'hltv-results-footer';
+    footer.innerText = footerText;
+    return footer;
   }
 
   function renderHltvMatchList() {
@@ -179,9 +237,14 @@
       return;
     }
 
-    hltvMatchItems.forEach((matchItem) => {
-      hltvMatchListElement.appendChild(createHltvMatchCard(matchItem));
+    hltvMatchItems.slice(0, hltvVisibleMatchCount).forEach((matchItem) => {
+      hltvMatchListElement.appendChild(createHltvMatchRow(matchItem));
     });
+
+    const footer = createHltvBatchFooter();
+    if (footer) {
+      hltvMatchListElement.appendChild(footer);
+    }
   }
 
   function setHltvMatchItems(nextMatchItems) {
@@ -206,7 +269,20 @@
       };
     });
 
+    hltvVisibleMatchCount = getInitialVisibleMatchCount(hltvMatchItems.length);
     renderHltvMatchList();
+  }
+
+  function applyHltvRecentMatchesState(nextState = {}) {
+    const normalizedState = normalizeHltvRecentMatchesState(nextState);
+    setHltvMatchItems(normalizedState.matches);
+
+    if (normalizedState.status === 'success') {
+      setHltvStatus('success', buildHltvSuccessDetail(normalizedState.matches, normalizedState.detail));
+      return;
+    }
+
+    setHltvStatus(normalizedState.status, normalizedState.detail);
   }
 
   function updateHltvMatchItem(matchId, updater) {
@@ -217,7 +293,35 @@
       const nextValue = typeof updater === 'function' ? updater(matchItem) : matchItem;
       return normalizeHltvMatchItem(nextValue);
     });
+    hltvVisibleMatchCount = Math.min(
+      Math.max(hltvVisibleMatchCount, getInitialVisibleMatchCount(hltvMatchItems.length)),
+      hltvMatchItems.length,
+    );
     renderHltvMatchList();
+  }
+
+  function revealMoreHltvMatches() {
+    if (isRevealingHltvMatches || !hasMoreVisibleMatches(hltvVisibleMatchCount, hltvMatchItems.length)) {
+      return;
+    }
+
+    isRevealingHltvMatches = true;
+    hltvVisibleMatchCount = revealVisibleMatchCount(hltvVisibleMatchCount, hltvMatchItems.length);
+    renderHltvMatchList();
+    isRevealingHltvMatches = false;
+  }
+
+  function handleHltvMatchListScroll() {
+    if (!hltvMatchListElement) {
+      return;
+    }
+
+    const remainingScroll = hltvMatchListElement.scrollHeight
+      - hltvMatchListElement.scrollTop
+      - hltvMatchListElement.clientHeight;
+    if (remainingScroll <= 80) {
+      revealMoreHltvMatches();
+    }
   }
 
   async function openDemoFromPath(demoPath) {
@@ -295,17 +399,30 @@
   async function fetchRecentHltvMatches() {
     setHltvStatus('loading', 'Fetching recent HLTV matches...');
     try {
-      const response = await ipcRenderer.invoke('hltv-list-recent-matches');
+      const response = await ipcRenderer.invoke('hltv-refresh-recent-matches');
       if (response.status !== 'success') {
         setHltvStatus('error', response.detail || response.message || 'Failed to fetch recent matches.');
         return;
       }
 
-      setHltvMatchItems(response.matches);
-      setHltvStatus('success', `Loaded ${response.matches.length} recent matches.`);
+      applyHltvRecentMatchesState(response);
     } catch (error) {
       setHltvStatus('error', error.message || 'Failed to fetch recent matches.');
       console.error('[HLTV Page Fatal Error]', error);
+    }
+  }
+
+  async function loadInitialHltvState() {
+    try {
+      const response = await ipcRenderer.invoke('hltv-get-recent-matches-state');
+      const normalizedState = normalizeHltvRecentMatchesState(response);
+      applyHltvRecentMatchesState(normalizedState);
+      if (shouldAutoRefreshHltvState(normalizedState)) {
+        await fetchRecentHltvMatches();
+      }
+    } catch (error) {
+      setHltvStatus('error', error.message || 'Failed to load initial HLTV state.');
+      console.error('[HLTV Initial State Error]', error);
     }
   }
 
@@ -314,6 +431,7 @@
   }
 
   if (hltvMatchListElement) {
+    hltvMatchListElement.addEventListener('scroll', handleHltvMatchListScroll);
     hltvMatchListElement.addEventListener('click', async (event) => {
       const target = event.target;
       if (!(target instanceof Element)) {
@@ -352,6 +470,7 @@
 
   const exportsObject = {
     fetchRecentHltvMatches,
+    loadInitialHltvState,
     openDemoFromPath,
     renderHltvMatchList,
     setHltvStatus,
@@ -363,8 +482,11 @@
 
   if (globalScope && typeof globalScope === 'object') {
     globalScope.fetchRecentHltvMatches = fetchRecentHltvMatches;
+    globalScope.loadInitialHltvState = loadInitialHltvState;
     globalScope.openDemoFromPath = openDemoFromPath;
     globalScope.renderHltvMatchList = renderHltvMatchList;
     globalScope.setHltvStatus = setHltvStatus;
   }
+
+  void loadInitialHltvState();
 }(typeof globalThis !== 'undefined' ? globalThis : window));

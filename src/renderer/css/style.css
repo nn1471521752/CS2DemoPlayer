@@ -485,39 +485,81 @@ body {
   height: 0;
 }
 
-.hltv-match-card {
+.hltv-results-row {
   border: 1px solid #2f3743;
   border-radius: 12px;
   background: linear-gradient(180deg, #171d25 0%, #121821 100%);
-  padding: 14px;
+  padding: 12px 14px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
-.hltv-match-card-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
+.hltv-results-row-main {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.3fr) minmax(180px, 1fr) auto;
+  align-items: center;
+  gap: 14px;
 }
 
-.hltv-match-copy {
+.hltv-results-versus {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
   min-width: 0;
 }
 
-.hltv-match-teams {
+.hltv-results-team {
   color: #f8fafc;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 800;
-  line-height: 1.3;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.hltv-match-meta {
-  margin-top: 6px;
+.hltv-results-team.is-right {
+  text-align: right;
+}
+
+.hltv-results-score {
+  min-width: 72px;
+  border: 1px solid rgba(96, 165, 250, 0.22);
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.12);
+  color: #dbeafe;
+  font-size: 13px;
+  font-weight: 800;
+  text-align: center;
+  padding: 6px 10px;
+}
+
+.hltv-results-meta {
   color: #93a4bb;
   font-size: 12px;
-  line-height: 1.4;
+  line-height: 1.45;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hltv-results-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.hltv-results-footer {
+  border: 1px dashed #334155;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.48);
+  color: #8ea1b8;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  padding: 10px 12px;
 }
 
 .hltv-match-action,
@@ -551,11 +593,13 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  padding-top: 2px;
 }
 
 .hltv-demo-file {
   border-top: 1px solid rgba(71, 85, 105, 0.35);
   padding-top: 10px;
+  padding-left: 14px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -570,6 +614,7 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  opacity: 0.92;
 }
 
 .hltv-demo-file-action {
@@ -741,6 +786,19 @@ body {
 
   .page-summary-strip {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .hltv-results-row-main {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: flex-start;
+  }
+
+  .hltv-results-actions {
+    justify-content: flex-start;
+  }
+
+  .hltv-results-meta {
+    white-space: normal;
   }
 }
 
