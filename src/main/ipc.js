@@ -44,6 +44,9 @@ const {
   createDefaultHltvService,
 } = require('./hltv-service');
 const {
+  createDefaultHltvRuntime,
+} = require('./hltv-runtime');
+const {
   isSupportedDemoPath,
 } = require('./demo-path-utils');
 
@@ -58,6 +61,7 @@ let selectedDemoChecksum = null;
 let selectedDemoFileStats = null;
 const roundCacheUpgradeJobs = new Map();
 const hltvService = createDefaultHltvService();
+const hltvRuntime = createDefaultHltvRuntime();
 
 function resolveVenvPython(rootPath) {
   const candidates = [
@@ -1744,8 +1748,16 @@ async function handleAnalyzeDemoRoundPositions(event, payload = {}) {
   );
 }
 
+async function handleHltvGetRecentMatchesState() {
+  return hltvRuntime.getRecentMatchesState();
+}
+
+async function handleHltvRefreshRecentMatches() {
+  return hltvRuntime.refreshRecentMatches();
+}
+
 async function handleHltvListRecentMatches() {
-  return hltvService.fetchRecentMatches();
+  return hltvRuntime.refreshRecentMatches();
 }
 
 async function handleHltvDownloadDemo(_event, payload = {}) {
@@ -1760,7 +1772,31 @@ ipcMain.handle('demo-library-list', handleDemoLibraryList);
 ipcMain.handle('demo-library-rename', handleDemoLibraryRename);
 ipcMain.handle('demo-library-delete', handleDemoLibraryDelete);
 ipcMain.handle('load-demo-from-db', handleLoadDemoFromDb);
+ipcMain.handle('hltv-get-recent-matches-state', handleHltvGetRecentMatchesState);
+ipcMain.handle('hltv-refresh-recent-matches', handleHltvRefreshRecentMatches);
 ipcMain.handle('hltv-list-recent-matches', handleHltvListRecentMatches);
 ipcMain.handle('hltv-download-demo', handleHltvDownloadDemo);
 ipcMain.handle('analyze-demo-round', handleAnalyzeDemoRound);
 ipcMain.handle('analyze-demo-round-positions', handleAnalyzeDemoRoundPositions);
+
+async function bootstrapHltvRuntime() {
+  try {
+    await hltvRuntime.ensureStarted();
+    await hltvRuntime.refreshRecentMatches();
+  } catch (error) {
+    console.error('[HLTV Runtime Bootstrap Error]', error);
+  }
+}
+
+async function disposeHltvRuntime() {
+  try {
+    await hltvRuntime.dispose();
+  } catch (error) {
+    console.error('[HLTV Runtime Dispose Error]', error);
+  }
+}
+
+module.exports = {
+  bootstrapHltvRuntime,
+  disposeHltvRuntime,
+};

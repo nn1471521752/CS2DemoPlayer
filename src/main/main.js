@@ -2,7 +2,10 @@ const { app, BrowserWindow } = require('electron');
 const path = require('path');
 
 // 引入我们分离出去的 IPC 通信模块
-require('./ipc');
+const {
+  bootstrapHltvRuntime,
+  disposeHltvRuntime,
+} = require('./ipc');
 
 let mainWindow;
 
@@ -17,9 +20,14 @@ function createWindow() {
   });
 
   mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
+  void bootstrapHltvRuntime();
 }
 
 app.whenReady().then(createWindow);
+
+app.on('before-quit', () => {
+  void disposeHltvRuntime();
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();

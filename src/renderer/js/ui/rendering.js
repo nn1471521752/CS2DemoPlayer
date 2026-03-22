@@ -1748,9 +1748,24 @@ function drawCanvasHud(players, frameIndex, layout, unitScale, renderTick = null
   const displayMetaByTeam = typeof getHudTeamDisplayMetaForFrame === 'function'
     ? getHudTeamDisplayMetaForFrame(players)
     : { [TEAM_NUM_T]: null, [TEAM_NUM_CT]: null };
+  const panelMapping = typeof resolveLockedTeamPanelMapping === 'function'
+    ? resolveLockedTeamPanelMapping(currentTeamPanelSideLock, displayMetaByTeam)
+    : { leftTeamNum: TEAM_NUM_T, rightTeamNum: TEAM_NUM_CT };
   drawRoundClockOnCanvas(layout, unitScale, renderTick);
-  drawTeamPanelHud(layout.leftPanel, TEAM_NUM_T, slotsByTeam[TEAM_NUM_T], displayMetaByTeam[TEAM_NUM_T], unitScale);
-  drawTeamPanelHud(layout.rightPanel, TEAM_NUM_CT, slotsByTeam[TEAM_NUM_CT], displayMetaByTeam[TEAM_NUM_CT], unitScale);
+  drawTeamPanelHud(
+    layout.leftPanel,
+    panelMapping.leftTeamNum,
+    slotsByTeam[panelMapping.leftTeamNum],
+    displayMetaByTeam[panelMapping.leftTeamNum],
+    unitScale,
+  );
+  drawTeamPanelHud(
+    layout.rightPanel,
+    panelMapping.rightTeamNum,
+    slotsByTeam[panelMapping.rightTeamNum],
+    displayMetaByTeam[panelMapping.rightTeamNum],
+    unitScale,
+  );
   drawKillFeedHud(frameIndex, layout, unitScale);
 }
 
