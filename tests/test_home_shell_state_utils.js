@@ -13,6 +13,12 @@ assert.strictEqual(
 );
 
 assert.strictEqual(
+  normalizeHomeSectionId(HOME_SECTION_IDS.entities),
+  HOME_SECTION_IDS.entities,
+  'should keep the entities home section id',
+);
+
+assert.strictEqual(
   normalizeHomeSectionId('bad-section'),
   HOME_SECTION_IDS.demoLibrary,
   'should fall back to the demo library section for unknown ids',

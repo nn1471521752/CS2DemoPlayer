@@ -3,8 +3,13 @@
     return [
       {
         id: HOME_SECTION_IDS.demoLibrary,
-        label: 'Demo 库',
+        label: 'Demo \u5e93',
         shortLabel: 'DB',
+      },
+      {
+        id: HOME_SECTION_IDS.entities,
+        label: 'Entities',
+        shortLabel: 'EN',
       },
       {
         id: HOME_SECTION_IDS.hltv,
@@ -52,6 +57,7 @@
   function getHomePageElementsBySection() {
     return {
       [HOME_SECTION_IDS.demoLibrary]: demoLibraryPage,
+      [HOME_SECTION_IDS.entities]: entitiesPage,
       [HOME_SECTION_IDS.hltv]: hltvPage,
     };
   }
@@ -69,6 +75,13 @@
 
     renderHomeNav();
     applyHomeNavCollapsedState();
+
+    if (
+      currentHomeSectionId === HOME_SECTION_IDS.entities
+      && typeof loadEntitiesPageState === 'function'
+    ) {
+      void loadEntitiesPageState();
+    }
   }
 
   function syncHomeShellState() {

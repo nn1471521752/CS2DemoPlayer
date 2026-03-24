@@ -28,10 +28,6 @@
           <button id="btn-home-nav-toggle" type="button" aria-label="Toggle navigation">Collapse</button>
         </div>
         <div id="home-nav-items" class="home-nav-items"></div>
-        <div class="home-nav-footer">
-          <div class="home-nav-footer-label">Database</div>
-          <div id="db-info" class="db-info-panel"></div>
-        </div>
       </aside>
 
       <section id="home-content" class="home-content">
@@ -67,6 +63,100 @@
                 <div id="parse-job-meta" class="parse-job-meta">Waiting...</div>
               </div>
             </aside>
+          </div>
+        </section>
+
+        <section id="entities-page" class="home-page is-hidden">
+          <div class="page-shell entities-page-shell">
+            <div class="page-header">
+              <div class="page-header-copy">
+                <div class="page-eyebrow">Entity Workspace</div>
+                <h3>Entities</h3>
+                <p class="page-subtitle">Review pending candidates from parsed demos, then browse approved teams and players.</p>
+              </div>
+            </div>
+
+            <div id="entities-summary" class="page-summary-strip"></div>
+
+            <div id="entities-status" class="entities-status-panel status-idle">Ready to load entity review state.</div>
+
+            <div class="entities-tab-strip" id="entities-tab-strip">
+              <div id="entities-tab-list" class="entities-tab-list"></div>
+            </div>
+
+            <div id="entities-panels" class="entities-panels">
+              <section
+                id="entities-panel-review"
+                class="entities-panel"
+                data-entities-panel="review"
+              >
+                <div class="entities-panel-card">
+                  <div class="entities-review-toolbar">
+                    <div>
+                      <div class="entities-section-eyebrow">Review Queue</div>
+                      <h4>Pending candidates</h4>
+                      <p id="entities-review-selection" class="entities-selection-copy">No candidates selected.</p>
+                    </div>
+                    <div class="entities-review-actions">
+                      <button id="btn-entities-approve-selected" type="button" class="entities-action-button is-primary" disabled>Approve selected</button>
+                      <button id="btn-entities-ignore-selected" type="button" class="entities-action-button" disabled>Ignore selected</button>
+                    </div>
+                  </div>
+
+                  <div class="entities-review-sections">
+                    <section class="entities-review-section">
+                      <div class="entities-section-header">
+                        <div class="entities-section-eyebrow">Teams</div>
+                        <h5>候选战队</h5>
+                      </div>
+                      <div id="entities-review-team-list" class="entities-list"></div>
+                    </section>
+
+                    <section class="entities-review-section">
+                      <div class="entities-section-header">
+                        <div class="entities-section-eyebrow">Players</div>
+                        <h5>候选选手</h5>
+                      </div>
+                      <div id="entities-review-player-list" class="entities-list"></div>
+                    </section>
+                  </div>
+                </div>
+              </section>
+
+              <section
+                id="entities-panel-teams"
+                class="entities-panel is-hidden"
+                data-entities-panel="teams"
+              >
+                <div class="entities-panel-card">
+                  <div class="entities-search-toolbar">
+                    <div>
+                      <div class="entities-section-eyebrow">Registry</div>
+                      <h4>已收录战队</h4>
+                    </div>
+                    <input id="entities-team-search" class="entities-search-input" type="search" placeholder="搜索战队">
+                  </div>
+                  <div id="entities-approved-team-list" class="entities-list"></div>
+                </div>
+              </section>
+
+              <section
+                id="entities-panel-players"
+                class="entities-panel is-hidden"
+                data-entities-panel="players"
+              >
+                <div class="entities-panel-card">
+                  <div class="entities-search-toolbar">
+                    <div>
+                      <div class="entities-section-eyebrow">Registry</div>
+                      <h4>已收录选手</h4>
+                    </div>
+                    <input id="entities-player-search" class="entities-search-input" type="search" placeholder="搜索选手或 SteamID">
+                  </div>
+                  <div id="entities-approved-player-list" class="entities-list"></div>
+                </div>
+              </section>
+            </div>
           </div>
         </section>
 
@@ -133,9 +223,11 @@
   <script src="js/ui/team-panel-header-utils.js"></script>
   <script src="js/ui/hud-slot-layout-utils.js"></script>
   <script src="js/ui/demo-library-page-utils.js"></script>
+  <script src="js/ui/entities-page-utils.js"></script>
   <script src="js/ui/hltv-page-utils.js"></script>
   <script src="js/ui/hltv-results-view-utils.js"></script>
   <script src="js/ui/library.js"></script>
+  <script src="js/ui/entities-page.js"></script>
   <script src="js/ui/hltv-page.js"></script>
   <script src="js/ui/hud.js"></script>
   <script src="js/ui/grenade-visual-utils.js"></script>

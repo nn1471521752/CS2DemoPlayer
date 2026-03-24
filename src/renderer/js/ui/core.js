@@ -9,6 +9,7 @@ const homeNav = document.getElementById('home-nav');
 const homeNavItems = document.getElementById('home-nav-items');
 const homeContent = document.getElementById('home-content');
 const demoLibraryPage = document.getElementById('demo-library-page');
+const entitiesPage = document.getElementById('entities-page');
 const hltvPage = document.getElementById('hltv-page');
 const btnOpen = document.getElementById('btn-open');
 const btnHomeImportDemo = document.getElementById('btn-home-import-demo');

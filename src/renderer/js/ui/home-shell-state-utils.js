@@ -1,6 +1,7 @@
 (function attachHomeShellStateUtils(globalScope) {
   const HOME_SECTION_IDS = Object.freeze({
     demoLibrary: 'demo-library',
+    entities: 'entities',
     hltv: 'hltv',
   });
 
