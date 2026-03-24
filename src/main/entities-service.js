@@ -20,6 +20,33 @@ function normalizeInteger(value, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function createDbFacadeEntitiesRepository(dbFacade = {}) {
+  return {
+    getMeta: (key) => dbFacade.getEntityRegistryMeta ? dbFacade.getEntityRegistryMeta(key) : '',
+    setMeta: (key, value) => (dbFacade.setEntityRegistryMeta ? dbFacade.setEntityRegistryMeta(key, value) : null),
+    replaceTeamCandidates: (rows) => (dbFacade.replaceTeamCandidates ? dbFacade.replaceTeamCandidates(rows) : null),
+    replacePlayerCandidates: (rows) => (dbFacade.replacePlayerCandidates ? dbFacade.replacePlayerCandidates(rows) : null),
+    listAllTeamCandidates: () => (dbFacade.listAllTeamCandidates ? dbFacade.listAllTeamCandidates() : []),
+    listAllPlayerCandidates: () => (dbFacade.listAllPlayerCandidates ? dbFacade.listAllPlayerCandidates() : []),
+    listPendingTeamCandidates: () => (dbFacade.listPendingTeamCandidates ? dbFacade.listPendingTeamCandidates() : []),
+    listPendingPlayerCandidates: () => (dbFacade.listPendingPlayerCandidates ? dbFacade.listPendingPlayerCandidates() : []),
+    listApprovedTeams: () => (dbFacade.listApprovedTeams ? dbFacade.listApprovedTeams() : []),
+    listApprovedPlayers: () => (dbFacade.listApprovedPlayers ? dbFacade.listApprovedPlayers() : []),
+    approveTeamCandidates: (teamKeys, approvedAt) => (
+      dbFacade.approveTeamCandidates ? dbFacade.approveTeamCandidates(teamKeys, approvedAt) : null
+    ),
+    approvePlayerCandidates: (steamids, approvedAt) => (
+      dbFacade.approvePlayerCandidates ? dbFacade.approvePlayerCandidates(steamids, approvedAt) : null
+    ),
+    ignoreTeamCandidates: (teamKeys, reviewedAt) => (
+      dbFacade.ignoreTeamCandidates ? dbFacade.ignoreTeamCandidates(teamKeys, reviewedAt) : null
+    ),
+    ignorePlayerCandidates: (steamids, reviewedAt) => (
+      dbFacade.ignorePlayerCandidates ? dbFacade.ignorePlayerCandidates(steamids, reviewedAt) : null
+    ),
+  };
+}
+
 function createEntitiesService({
   repository,
   loadParsedDemoInputs = async () => [],
@@ -162,5 +189,6 @@ function createEntitiesService({
 module.exports = {
   LAST_CANDIDATE_SCAN_AT_KEY,
   LAST_CANDIDATE_SCAN_AFFECTED_DEMOS_KEY,
+  createDbFacadeEntitiesRepository,
   createEntitiesService,
 };

@@ -7,9 +7,22 @@ const { getDemoByChecksum: getDemoByChecksumInternal } = require('./demo');
 const { runMigrations } = require('./migrations');
 const { getDebugInfo: getDebugInfoInternal } = require('./debug');
 const {
+  approvePlayerCandidates: approvePlayerCandidatesInternal,
+  approveTeamCandidates: approveTeamCandidatesInternal,
   getEntityRegistryMeta: getEntityRegistryMetaInternal,
+  ignorePlayerCandidates: ignorePlayerCandidatesInternal,
+  ignoreTeamCandidates: ignoreTeamCandidatesInternal,
+  listAllPlayerCandidates: listAllPlayerCandidatesInternal,
+  listAllTeamCandidates: listAllTeamCandidatesInternal,
+  listApprovedPlayers: listApprovedPlayersInternal,
+  listApprovedTeams: listApprovedTeamsInternal,
+  listParsedDemoEntityInputs: listParsedDemoEntityInputsInternal,
+  listPendingPlayerCandidates: listPendingPlayerCandidatesInternal,
   listPendingTeamCandidates: listPendingTeamCandidatesInternal,
+  replacePlayerCandidates: replacePlayerCandidatesInternal,
+  replaceTeamCandidates: replaceTeamCandidatesInternal,
   setEntityRegistryMeta: setEntityRegistryMetaInternal,
+  upsertPlayerCandidate: upsertPlayerCandidateInternal,
   upsertTeamCandidate: upsertTeamCandidateInternal,
 } = require('./entities');
 
@@ -1996,8 +2009,94 @@ async function upsertTeamCandidate(candidate) {
   }, candidate);
 }
 
+async function upsertPlayerCandidate(candidate) {
+  return upsertPlayerCandidateInternal({
+    getDatabase,
+  }, candidate);
+}
+
+async function replaceTeamCandidates(candidates) {
+  return replaceTeamCandidatesInternal({
+    getDatabase,
+  }, candidates);
+}
+
+async function replacePlayerCandidates(candidates) {
+  return replacePlayerCandidatesInternal({
+    getDatabase,
+  }, candidates);
+}
+
+async function listAllTeamCandidates() {
+  return listAllTeamCandidatesInternal({
+    getDatabase,
+    getAll,
+  });
+}
+
+async function listPendingPlayerCandidates() {
+  return listPendingPlayerCandidatesInternal({
+    getDatabase,
+    getAll,
+  });
+}
+
 async function listPendingTeamCandidates() {
   return listPendingTeamCandidatesInternal({
+    getDatabase,
+    getAll,
+  });
+}
+
+async function listAllPlayerCandidates() {
+  return listAllPlayerCandidatesInternal({
+    getDatabase,
+    getAll,
+  });
+}
+
+async function approveTeamCandidates(teamKeys, approvedAt = '') {
+  return approveTeamCandidatesInternal({
+    getDatabase,
+    getOne,
+  }, teamKeys, approvedAt);
+}
+
+async function approvePlayerCandidates(steamids, approvedAt = '') {
+  return approvePlayerCandidatesInternal({
+    getDatabase,
+    getOne,
+  }, steamids, approvedAt);
+}
+
+async function ignoreTeamCandidates(teamKeys, reviewedAt = '') {
+  return ignoreTeamCandidatesInternal({
+    getDatabase,
+  }, teamKeys, reviewedAt);
+}
+
+async function ignorePlayerCandidates(steamids, reviewedAt = '') {
+  return ignorePlayerCandidatesInternal({
+    getDatabase,
+  }, steamids, reviewedAt);
+}
+
+async function listApprovedTeams() {
+  return listApprovedTeamsInternal({
+    getDatabase,
+    getAll,
+  });
+}
+
+async function listApprovedPlayers() {
+  return listApprovedPlayersInternal({
+    getDatabase,
+    getAll,
+  });
+}
+
+async function listParsedDemoEntityInputs() {
+  return listParsedDemoEntityInputsInternal({
     getDatabase,
     getAll,
   });
@@ -2021,7 +2120,20 @@ module.exports = {
   getDebugInfo,
   getEntityRegistryMeta,
   setEntityRegistryMeta,
+  listParsedDemoEntityInputs,
+  upsertPlayerCandidate,
   upsertTeamCandidate,
+  replaceTeamCandidates,
+  replacePlayerCandidates,
+  listAllTeamCandidates,
+  listPendingPlayerCandidates,
   listPendingTeamCandidates,
+  listAllPlayerCandidates,
+  approveTeamCandidates,
+  approvePlayerCandidates,
+  ignoreTeamCandidates,
+  ignorePlayerCandidates,
+  listApprovedTeams,
+  listApprovedPlayers,
   databaseFilePath,
 };

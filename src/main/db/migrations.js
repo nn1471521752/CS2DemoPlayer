@@ -292,6 +292,7 @@ const CREATE_TEAMS_TABLE_SQL = `
     team_key TEXT PRIMARY KEY,
     display_name TEXT NOT NULL DEFAULT '',
     normalized_name TEXT NOT NULL DEFAULT '',
+    demo_count INTEGER NOT NULL DEFAULT 0,
     approved_at TEXT NOT NULL DEFAULT '',
     last_seen_at TEXT NOT NULL DEFAULT ''
   );
@@ -307,6 +308,8 @@ const CREATE_PLAYERS_TABLE_SQL = `
     steamid TEXT PRIMARY KEY,
     display_name TEXT NOT NULL DEFAULT '',
     last_team_key TEXT NOT NULL DEFAULT '',
+    last_team_name TEXT NOT NULL DEFAULT '',
+    demo_count INTEGER NOT NULL DEFAULT 0,
     approved_at TEXT NOT NULL DEFAULT '',
     last_seen_at TEXT NOT NULL DEFAULT ''
   );
@@ -480,6 +483,18 @@ function ensureColumns(database, hasColumn) {
 
   if (!hasColumn(database, 'player_positions', 'inventory_json')) {
     database.run(`ALTER TABLE player_positions ADD COLUMN inventory_json TEXT NOT NULL DEFAULT '[]';`);
+  }
+
+  if (!hasColumn(database, 'teams', 'demo_count')) {
+    database.run(`ALTER TABLE teams ADD COLUMN demo_count INTEGER NOT NULL DEFAULT 0;`);
+  }
+
+  if (!hasColumn(database, 'players', 'last_team_name')) {
+    database.run(`ALTER TABLE players ADD COLUMN last_team_name TEXT NOT NULL DEFAULT '';`);
+  }
+
+  if (!hasColumn(database, 'players', 'demo_count')) {
+    database.run(`ALTER TABLE players ADD COLUMN demo_count INTEGER NOT NULL DEFAULT 0;`);
   }
 }
 

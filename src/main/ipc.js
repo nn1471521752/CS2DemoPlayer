@@ -24,15 +24,30 @@ const {
   runTaskQueue,
 } = require('./task-queue');
 const {
+  approvePlayerCandidates,
+  approveTeamCandidates,
   computeDemoChecksum,
+  getEntityRegistryMeta,
   getDemoByChecksum,
+  ignorePlayerCandidates,
+  ignoreTeamCandidates,
+  listAllPlayerCandidates,
+  listAllTeamCandidates,
+  listApprovedPlayers,
+  listApprovedTeams,
+  listParsedDemoEntityInputs,
+  listPendingPlayerCandidates,
+  listPendingTeamCandidates,
   listDemos,
   renameDemo,
+  replacePlayerCandidates,
+  replaceTeamCandidates,
   deleteDemo,
   saveDemoIndex,
   saveRoundFrames,
   saveRoundFramesBatch,
   saveRoundDataFromCsv,
+  setEntityRegistryMeta,
   getRoundFrames,
   getRoundPlayerPositions,
   getRoundBombEvents,
@@ -46,6 +61,10 @@ const {
 const {
   createDefaultHltvRuntime,
 } = require('./hltv-runtime');
+const {
+  createDbFacadeEntitiesRepository,
+  createEntitiesService,
+} = require('./entities-service');
 const {
   isSupportedDemoPath,
 } = require('./demo-path-utils');
@@ -62,6 +81,25 @@ let selectedDemoFileStats = null;
 const roundCacheUpgradeJobs = new Map();
 const hltvService = createDefaultHltvService();
 const hltvRuntime = createDefaultHltvRuntime();
+const entitiesService = createEntitiesService({
+  repository: createDbFacadeEntitiesRepository({
+    getEntityRegistryMeta,
+    setEntityRegistryMeta,
+    listAllTeamCandidates,
+    listAllPlayerCandidates,
+    listPendingTeamCandidates,
+    listPendingPlayerCandidates,
+    listApprovedTeams,
+    listApprovedPlayers,
+    replaceTeamCandidates,
+    replacePlayerCandidates,
+    approveTeamCandidates,
+    approvePlayerCandidates,
+    ignoreTeamCandidates,
+    ignorePlayerCandidates,
+  }),
+  loadParsedDemoInputs: listParsedDemoEntityInputs,
+});
 
 function resolveVenvPython(rootPath) {
   const candidates = [
@@ -1022,6 +1060,8 @@ async function performParseCurrentDemo(event, payload, parserResult, parseStarte
     importCounts,
   );
 
+  await refreshEntityCandidatesAfterSuccessfulParse();
+
   emitParseProgress(event.sender, withElapsed(
     buildParseDonePayload(rounds.length, includeGrenades, 0),
     parseStartedAtMs,
@@ -1070,6 +1110,14 @@ async function buildParseCurrentDemoSuccess(
     cacheStatus: hasCompleteCache ? 'complete' : resolveCacheStatus(cachedRoundsCount, roundsCount, cachedGrenadeRoundsCount),
     fileExists: true,
   });
+}
+
+async function refreshEntityCandidatesAfterSuccessfulParse() {
+  try {
+    await entitiesService.refreshCandidatesFromParsedDemos();
+  } catch (error) {
+    console.error('[Entities Refresh Error]', error);
+  }
 }
 
 async function handleDbDebugInfo() {
@@ -1764,6 +1812,18 @@ async function handleHltvDownloadDemo(_event, payload = {}) {
   return hltvService.downloadDemoForMatch(payload);
 }
 
+async function handleEntitiesGetPageState() {
+  return entitiesService.getEntitiesPageState();
+}
+
+async function handleEntitiesApproveCandidates(_event, payload = {}) {
+  return entitiesService.approveCandidates(payload);
+}
+
+async function handleEntitiesIgnoreCandidates(_event, payload = {}) {
+  return entitiesService.ignoreCandidates(payload);
+}
+
 ipcMain.handle('analyze-demo', handleAnalyzeDemo);
 ipcMain.handle('analyze-demo-from-path', handleAnalyzeDemoFromPath);
 ipcMain.handle('parse-current-demo', handleParseCurrentDemo);
@@ -1776,6 +1836,9 @@ ipcMain.handle('hltv-get-recent-matches-state', handleHltvGetRecentMatchesState)
 ipcMain.handle('hltv-refresh-recent-matches', handleHltvRefreshRecentMatches);
 ipcMain.handle('hltv-list-recent-matches', handleHltvListRecentMatches);
 ipcMain.handle('hltv-download-demo', handleHltvDownloadDemo);
+ipcMain.handle('entities-get-page-state', handleEntitiesGetPageState);
+ipcMain.handle('entities-approve-candidates', handleEntitiesApproveCandidates);
+ipcMain.handle('entities-ignore-candidates', handleEntitiesIgnoreCandidates);
 ipcMain.handle('analyze-demo-round', handleAnalyzeDemoRound);
 ipcMain.handle('analyze-demo-round-positions', handleAnalyzeDemoRoundPositions);
 

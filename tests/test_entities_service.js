@@ -1,6 +1,9 @@
 const assert = require('assert');
 
-const { createEntitiesService } = require('../src/main/entities-service.js');
+const {
+  createDbFacadeEntitiesRepository,
+  createEntitiesService,
+} = require('../src/main/entities-service.js');
 
 function createMemoryRepository() {
   const state = {
@@ -125,6 +128,24 @@ const parsedDemoInputs = [
 ];
 
 (async () => {
+  const adapter = createDbFacadeEntitiesRepository({
+    getEntityRegistryMeta: async (key) => `meta:${key}`,
+    setEntityRegistryMeta: async () => {},
+    replaceTeamCandidates: async () => {},
+    replacePlayerCandidates: async () => {},
+    listAllTeamCandidates: async () => [],
+    listAllPlayerCandidates: async () => [],
+    listPendingTeamCandidates: async () => [],
+    listPendingPlayerCandidates: async () => [],
+    listApprovedTeams: async () => [],
+    listApprovedPlayers: async () => [],
+    approveTeamCandidates: async () => {},
+    approvePlayerCandidates: async () => {},
+    ignoreTeamCandidates: async () => {},
+    ignorePlayerCandidates: async () => {},
+  });
+  assert.strictEqual(await adapter.getMeta('demo'), 'meta:demo');
+
   const repository = createMemoryRepository();
   const service = createEntitiesService({
     repository,
