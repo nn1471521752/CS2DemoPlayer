@@ -98,6 +98,9 @@
       lastDemoName: normalizeText(row.lastDemoName),
       lastSeenAt: normalizeText(row.lastSeenAt),
       approvedAt: normalizeText(row.approvedAt),
+      hltvTeamUrl: normalizeText(row.hltvTeamUrl),
+      hltvLogoPath: normalizeText(row.hltvLogoPath),
+      hltvLogoUpdatedAt: normalizeText(row.hltvLogoUpdatedAt),
     };
   }
 
@@ -294,6 +297,42 @@
     return tag;
   }
 
+  function buildEntityLogoFallbackText(entityRow = {}) {
+    const displayName = normalizeText(entityRow.displayName || entityRow.teamKey || '?');
+    if (!displayName) {
+      return '?';
+    }
+
+    return displayName
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase() || '')
+      .join('') || displayName[0].toUpperCase();
+  }
+
+  function createEntityLogoNode(entityRow = {}) {
+    const logoSlot = document.createElement('div');
+    logoSlot.className = 'entities-logo-slot';
+
+    if (typeof hasEntityLogo === 'function' && hasEntityLogo(entityRow)) {
+      const image = document.createElement('img');
+      image.className = 'entities-logo-image';
+      image.alt = `${normalizeText(entityRow.displayName || entityRow.teamKey || 'team')} logo`;
+      image.src = typeof toEntityLogoImageSrc === 'function'
+        ? toEntityLogoImageSrc(entityRow.hltvLogoPath)
+        : normalizeText(entityRow.hltvLogoPath);
+      logoSlot.appendChild(image);
+      return logoSlot;
+    }
+
+    const placeholder = document.createElement('div');
+    placeholder.className = 'entities-logo-placeholder';
+    placeholder.innerText = buildEntityLogoFallbackText(entityRow);
+    logoSlot.appendChild(placeholder);
+    return logoSlot;
+  }
+
   function buildCandidateMetaParts(candidate, type) {
     const parts = [
       `${candidate.demoCount} ${ENTITIES_COPY.demoCountSuffix}`,
@@ -310,7 +349,7 @@
     return parts;
   }
 
-  function createReviewCandidateRow(type, candidate) {
+  function createReviewCandidateRow(type, candidate, approvedTeamsByKey = new Map()) {
     const identityKey = type === 'team' ? candidate.teamKey : candidate.steamid;
     const input = document.createElement('input');
     input.type = 'checkbox';
@@ -353,11 +392,15 @@
     const label = document.createElement('label');
     label.className = 'entities-row is-selectable';
     label.appendChild(input);
+    if (type === 'team') {
+      label.classList.add('has-logo-slot');
+      label.appendChild(createEntityLogoNode(approvedTeamsByKey.get(candidate.teamKey) || candidate));
+    }
     label.appendChild(body);
     return label;
   }
 
-  function renderReviewList(container, rows, type, emptyMessage) {
+  function renderReviewList(container, rows, type, emptyMessage, approvedTeamsByKey = new Map()) {
     if (!container) {
       return;
     }
@@ -367,7 +410,7 @@
       return;
     }
     rows.forEach((row) => {
-      container.appendChild(createReviewCandidateRow(type, row));
+      container.appendChild(createReviewCandidateRow(type, row, approvedTeamsByKey));
     });
   }
 
@@ -383,9 +426,13 @@
     return map;
   }
 
-  function createApprovedEntityRow(titleText, metaText, tagTexts = []) {
+  function createApprovedEntityRow(titleText, metaText, tagTexts = [], leadingNode = null) {
     const row = document.createElement('article');
     row.className = 'entities-approved-row';
+
+    if (leadingNode) {
+      row.appendChild(leadingNode);
+    }
 
     const main = document.createElement('div');
     main.className = 'entities-row-body';
@@ -446,6 +493,7 @@
           team.displayName || team.teamKey,
           metaText,
           [team.teamKey],
+          createEntityLogoNode(team),
         ),
       );
     });
@@ -492,17 +540,22 @@
   }
 
   function renderReviewPanel() {
+    const approvedTeamsByKey = new Map(
+      entitiesState.approved.teams.map((team) => [team.teamKey, team]),
+    );
     renderReviewList(
       entitiesReviewTeamListElement,
       entitiesState.pending.teams,
       'team',
       ENTITIES_COPY.reviewTeamsEmpty,
+      approvedTeamsByKey,
     );
     renderReviewList(
       entitiesReviewPlayerListElement,
       entitiesState.pending.players,
       'player',
       ENTITIES_COPY.reviewPlayersEmpty,
+      approvedTeamsByKey,
     );
     renderEntitiesSelectionState();
   }
