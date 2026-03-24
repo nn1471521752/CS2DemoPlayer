@@ -6,7 +6,9 @@ const {
   filterEntitiesBySearch,
   getEntitiesEmptyStateCopy,
   getEntitiesTabLabel,
+  hasEntityLogo,
   normalizeEntitiesTabId,
+  toEntityLogoImageSrc,
   toggleEntitySelection,
 } = require('../src/renderer/js/ui/entities-page-utils.js');
 
@@ -100,6 +102,24 @@ assert.deepStrictEqual(
     selectedCount: 3,
   },
   'should expose the current bulk-action selection state',
+);
+
+assert.strictEqual(
+  toEntityLogoImageSrc('E:\\CS2DemoPlayer\\CS2DemoPlayer\\data\\team-logos\\team spirit.png'),
+  'file:///E:/CS2DemoPlayer/CS2DemoPlayer/data/team-logos/team%20spirit.png',
+  'should convert local Windows file paths into image-safe file URLs',
+);
+
+assert.strictEqual(
+  hasEntityLogo({ hltvLogoPath: 'E:\\CS2DemoPlayer\\CS2DemoPlayer\\data\\team-logos\\team-spirit.png' }),
+  true,
+  'should report logo availability when a local logo path exists',
+);
+
+assert.strictEqual(
+  hasEntityLogo({ hltvLogoPath: '' }),
+  false,
+  'should report placeholder state when no local logo path exists',
 );
 
 console.log('entities page utils ok');

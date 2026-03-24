@@ -85,6 +85,30 @@
     };
   }
 
+  function toEntityLogoImageSrc(filePath) {
+    const normalizedPath = normalizeText(filePath);
+    if (!normalizedPath) {
+      return '';
+    }
+
+    if (/^file:/i.test(normalizedPath)) {
+      return normalizedPath;
+    }
+
+    const slashNormalizedPath = normalizedPath.replace(/\\/g, '/');
+    if (/^[a-z]:\//i.test(slashNormalizedPath)) {
+      return encodeURI(`file:///${slashNormalizedPath}`);
+    }
+    if (slashNormalizedPath.startsWith('/')) {
+      return encodeURI(`file://${slashNormalizedPath}`);
+    }
+    return encodeURI(slashNormalizedPath);
+  }
+
+  function hasEntityLogo(entityRow = {}) {
+    return normalizeText(entityRow?.hltvLogoPath).length > 0;
+  }
+
   function getEntitiesEmptyStateCopy(tabId) {
     const normalizedTabId = normalizeEntitiesTabId(tabId);
     return ENTITIES_EMPTY_STATE_COPY[normalizedTabId] || ENTITIES_EMPTY_STATE_COPY.review;
@@ -102,7 +126,9 @@
     filterEntitiesBySearch,
     getEntitiesEmptyStateCopy,
     getEntitiesTabLabel,
+    hasEntityLogo,
     normalizeEntitiesTabId,
+    toEntityLogoImageSrc,
     toggleEntitySelection,
   };
 
@@ -117,7 +143,9 @@
     globalScope.filterEntitiesBySearch = filterEntitiesBySearch;
     globalScope.getEntitiesEmptyStateCopy = getEntitiesEmptyStateCopy;
     globalScope.getEntitiesTabLabel = getEntitiesTabLabel;
+    globalScope.hasEntityLogo = hasEntityLogo;
     globalScope.normalizeEntitiesTabId = normalizeEntitiesTabId;
+    globalScope.toEntityLogoImageSrc = toEntityLogoImageSrc;
     globalScope.toggleEntitySelection = toggleEntitySelection;
   }
 }(typeof globalThis !== 'undefined' ? globalThis : window));
