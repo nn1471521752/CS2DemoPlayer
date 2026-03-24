@@ -44,6 +44,9 @@ function createDbFacadeEntitiesRepository(dbFacade = {}) {
     ignorePlayerCandidates: (steamids, reviewedAt) => (
       dbFacade.ignorePlayerCandidates ? dbFacade.ignorePlayerCandidates(steamids, reviewedAt) : null
     ),
+    setTeamLogoMetadata: (teamKey, metadata) => (
+      dbFacade.setTeamLogoMetadata ? dbFacade.setTeamLogoMetadata(teamKey, metadata) : null
+    ),
   };
 }
 
@@ -52,6 +55,7 @@ function createEntitiesService({
   loadParsedDemoInputs = async () => [],
   buildCandidates = buildEntityCandidatesFromParsedDemos,
   now = () => new Date().toISOString(),
+  syncApprovedTeamLogo = async () => null,
 } = {}) {
   if (!repository || typeof repository !== 'object') {
     throw new Error('createEntitiesService requires a repository');
@@ -158,6 +162,31 @@ function createEntitiesService({
         ? repository.approvePlayerCandidates(steamids, approvedAt)
         : null,
     ]);
+
+    if (teamKeys.length > 0 && repository.listApprovedTeams && repository.setTeamLogoMetadata) {
+      const approvedTeams = await repository.listApprovedTeams();
+      const approvedTeamsByKey = new Map(
+        (Array.isArray(approvedTeams) ? approvedTeams : []).map((team) => [normalizeText(team.teamKey), team]),
+      );
+      await Promise.all(teamKeys.map(async (teamKey) => {
+        const approvedTeam = approvedTeamsByKey.get(teamKey);
+        if (!approvedTeam) {
+          return;
+        }
+
+        try {
+          const logoMetadata = await syncApprovedTeamLogo({
+            teamKey,
+            displayName: normalizeText(approvedTeam.displayName),
+          });
+          if (logoMetadata) {
+            await repository.setTeamLogoMetadata(teamKey, logoMetadata);
+          }
+        } catch (_error) {
+          // Team approval is the primary action; logo sync is best effort.
+        }
+      }));
+    }
 
     return getEntitiesPageState();
   }

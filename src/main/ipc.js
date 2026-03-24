@@ -54,13 +54,23 @@ const {
   getRoundClockStates,
   getCachedRoundsCount,
   getDebugInfo,
+  setTeamLogoMetadata,
 } = require('./db');
 const {
   createDefaultHltvService,
+  resolveDefaultHltvHeadless,
+  resolveHltvExecutablePath,
 } = require('./hltv-service');
+const {
+  createHltvBrowserSession,
+} = require('./hltv-browser');
 const {
   createDefaultHltvRuntime,
 } = require('./hltv-runtime');
+const {
+  readMatchTeamAssetsFromPage,
+  syncTeamLogoFromRecentMatches,
+} = require('./hltv-team-logo');
 const {
   createDbFacadeEntitiesRepository,
   createEntitiesService,
@@ -71,6 +81,7 @@ const {
 
 const projectRoot = path.resolve(__dirname, '../..');
 const pythonScript = path.join(__dirname, '../python/engine.py');
+const teamLogoCacheDirectoryPath = path.join(projectRoot, 'data', 'team-logos');
 const DEMO_FILTERS = [{ name: 'CS2 Demos', extensions: ['dem'] }];
 const MAX_PARSE_CONCURRENCY = 6;
 const FIXED_TICKRATE = 8;
@@ -97,8 +108,10 @@ const entitiesService = createEntitiesService({
     approvePlayerCandidates,
     ignoreTeamCandidates,
     ignorePlayerCandidates,
+    setTeamLogoMetadata,
   }),
   loadParsedDemoInputs: listParsedDemoEntityInputs,
+  syncApprovedTeamLogo,
 });
 
 function resolveVenvPython(rootPath) {
@@ -125,6 +138,49 @@ function toInteger(value, fallback = 0) {
   }
 
   return Math.floor(number);
+}
+
+async function getRecentMatchesForTeamLogoSync() {
+  const cachedState = hltvRuntime.getRecentMatchesState();
+  if (Array.isArray(cachedState?.matches) && cachedState.matches.length > 0) {
+    return cachedState.matches;
+  }
+
+  const refreshedState = await hltvRuntime.refreshRecentMatches();
+  return Array.isArray(refreshedState?.matches) ? refreshedState.matches : [];
+}
+
+async function withHltvLogoBrowserSession(callback) {
+  const session = await createHltvBrowserSession({
+    headless: resolveDefaultHltvHeadless(process.env),
+    timeoutMs: 30000,
+    executablePath: resolveHltvExecutablePath() || undefined,
+  });
+
+  try {
+    return await callback(session);
+  } finally {
+    await session.close();
+  }
+}
+
+async function syncApprovedTeamLogo({ teamKey, displayName }) {
+  const recentMatches = await getRecentMatchesForTeamLogoSync();
+  if (recentMatches.length === 0) {
+    return null;
+  }
+
+  return withHltvLogoBrowserSession(async (session) => syncTeamLogoFromRecentMatches({
+    recentMatches,
+    teamKey,
+    displayName,
+    cacheDirectoryPath: teamLogoCacheDirectoryPath,
+    readMatchTeamAssets: async (matchMeta) => {
+      await session.page.goto(matchMeta.matchUrl, { waitUntil: 'domcontentloaded' });
+      await session.page.waitForLoadState('domcontentloaded');
+      return readMatchTeamAssetsFromPage(session.page);
+    },
+  }));
 }
 
 function resolveTickScale(sourceTickrate) {

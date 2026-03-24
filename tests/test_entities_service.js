@@ -54,9 +54,24 @@ function createMemoryRepository() {
           normalizedName: row.normalizedName,
           approvedAt,
           lastSeenAt: row.lastSeenAt,
+          hltvTeamUrl: '',
+          hltvLogoPath: '',
+          hltvLogoUpdatedAt: '',
         }));
       state.teams = dedupeByKey([...state.teams, ...nextApproved], 'teamKey');
       state.teamCandidates = state.teamCandidates.filter((row) => !teamKeys.includes(row.teamKey));
+    },
+    async setTeamLogoMetadata(teamKey, metadata) {
+      state.teams = state.teams.map((team) => (
+        team.teamKey === teamKey
+          ? {
+            ...team,
+            hltvTeamUrl: metadata.hltvTeamUrl || '',
+            hltvLogoPath: metadata.hltvLogoPath || '',
+            hltvLogoUpdatedAt: metadata.hltvLogoUpdatedAt || '',
+          }
+          : team
+      ));
     },
     async approvePlayerCandidates(steamids, approvedAt) {
       const nextApproved = state.playerCandidates
@@ -151,6 +166,17 @@ const parsedDemoInputs = [
     repository,
     loadParsedDemoInputs: async () => parsedDemoInputs,
     now: () => '2026-03-24T11:30:00.000Z',
+    syncApprovedTeamLogo: async ({ teamKey }) => {
+      if (teamKey === 'team spirit') {
+        return {
+          teamKey,
+          hltvTeamUrl: 'https://www.hltv.org/team/7020/spirit',
+          hltvLogoPath: 'E:\\CS2DemoPlayer\\CS2DemoPlayer\\data\\team-logos\\team-spirit.png',
+          hltvLogoUpdatedAt: '2026-03-24T11:31:00.000Z',
+        };
+      }
+      throw new Error(`unexpected team key: ${teamKey}`);
+    },
   });
 
   const initialState = await service.getEntitiesPageState();
@@ -184,7 +210,37 @@ const parsedDemoInputs = [
   assert.strictEqual(approvedState.approved.teams.length, 1);
   assert.strictEqual(approvedState.approved.players.length, 1);
   assert.strictEqual(approvedState.approved.teams[0].teamKey, 'team spirit');
+  assert.strictEqual(
+    approvedState.approved.teams[0].hltvLogoPath,
+    'E:\\CS2DemoPlayer\\CS2DemoPlayer\\data\\team-logos\\team-spirit.png',
+  );
   assert.strictEqual(approvedState.approved.players[0].steamid, '7656111');
+
+  const failingLogoRepository = createMemoryRepository();
+  const failingLogoService = createEntitiesService({
+    repository: failingLogoRepository,
+    loadParsedDemoInputs: async () => parsedDemoInputs,
+    now: () => '2026-03-24T11:30:00.000Z',
+    syncApprovedTeamLogo: async () => {
+      throw new Error('hltv unavailable');
+    },
+  });
+
+  await failingLogoService.getEntitiesPageState();
+  const approvalStillSucceeds = await failingLogoService.approveCandidates({
+    teamKeys: ['team spirit'],
+    steamids: [],
+  });
+  assert.strictEqual(
+    approvalStillSucceeds.approved.teams[0].teamKey,
+    'team spirit',
+    'approval should still succeed when logo sync fails',
+  );
+  assert.strictEqual(
+    approvalStillSucceeds.approved.teams[0].hltvLogoPath,
+    '',
+    'failed logo sync should leave team approved without logo metadata',
+  );
 
   console.log('entities service ok');
 })().catch((error) => {
