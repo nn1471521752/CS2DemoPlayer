@@ -59,6 +59,9 @@ function mapTeamRow(row = {}) {
     demoCount: normalizeInteger(row.demo_count, 0),
     approvedAt: normalizeText(row.approved_at),
     lastSeenAt: normalizeText(row.last_seen_at),
+    hltvTeamUrl: normalizeText(row.hltv_team_url),
+    hltvLogoPath: normalizeText(row.hltv_logo_path),
+    hltvLogoUpdatedAt: normalizeText(row.hltv_logo_updated_at),
   };
 }
 
@@ -518,9 +521,12 @@ async function approveTeamCandidates(context, teamKeys, approvedAt = '') {
             normalized_name,
             demo_count,
             approved_at,
-            last_seen_at
+            last_seen_at,
+            hltv_team_url,
+            hltv_logo_path,
+            hltv_logo_updated_at
           )
-          VALUES (?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(team_key) DO UPDATE SET
             display_name = excluded.display_name,
             normalized_name = excluded.normalized_name,
@@ -535,6 +541,9 @@ async function approveTeamCandidates(context, teamKeys, approvedAt = '') {
           normalizeInteger(row.demo_count, 0),
           timestamp,
           normalizeText(row.last_seen_at),
+          '',
+          '',
+          '',
         ],
       );
 
@@ -651,6 +660,30 @@ async function ignorePlayerCandidates(context, steamids, reviewedAt = '') {
   });
 }
 
+async function setTeamLogoMetadata(context, teamKey, metadata = {}) {
+  const normalizedTeamKey = normalizeText(teamKey);
+  if (!normalizedTeamKey) {
+    return;
+  }
+
+  const database = await context.getDatabase();
+  database.run(
+    `
+      UPDATE teams
+      SET hltv_team_url = ?,
+          hltv_logo_path = ?,
+          hltv_logo_updated_at = ?
+      WHERE team_key = ?
+    `,
+    [
+      normalizeText(metadata.hltvTeamUrl),
+      normalizeText(metadata.hltvLogoPath),
+      normalizeText(metadata.hltvLogoUpdatedAt),
+      normalizedTeamKey,
+    ],
+  );
+}
+
 async function listApprovedTeams(context) {
   const database = await context.getDatabase();
   const rows = context.getAll(
@@ -662,7 +695,10 @@ async function listApprovedTeams(context) {
         normalized_name,
         demo_count,
         approved_at,
-        last_seen_at
+        last_seen_at,
+        hltv_team_url,
+        hltv_logo_path,
+        hltv_logo_updated_at
       FROM teams
       ORDER BY display_name ASC
     `,
@@ -705,6 +741,7 @@ module.exports = {
   listPendingTeamCandidates,
   replacePlayerCandidates,
   replaceTeamCandidates,
+  setTeamLogoMetadata,
   setEntityRegistryMeta,
   upsertPlayerCandidate,
   upsertTeamCandidate,

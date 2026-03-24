@@ -21,6 +21,7 @@ const {
   listPendingTeamCandidates: listPendingTeamCandidatesInternal,
   replacePlayerCandidates: replacePlayerCandidatesInternal,
   replaceTeamCandidates: replaceTeamCandidatesInternal,
+  setTeamLogoMetadata: setTeamLogoMetadataInternal,
   setEntityRegistryMeta: setEntityRegistryMetaInternal,
   upsertPlayerCandidate: upsertPlayerCandidateInternal,
   upsertTeamCandidate: upsertTeamCandidateInternal,
@@ -2003,6 +2004,12 @@ async function setEntityRegistryMeta(metaKey, metaValue, updatedAt = '') {
   }, metaKey, metaValue, updatedAt);
 }
 
+async function setTeamLogoMetadata(teamKey, metadata) {
+  return setTeamLogoMetadataInternal({
+    getDatabase,
+  }, teamKey, metadata);
+}
+
 async function upsertTeamCandidate(candidate) {
   return upsertTeamCandidateInternal({
     getDatabase,
@@ -2120,6 +2127,7 @@ module.exports = {
   getDebugInfo,
   getEntityRegistryMeta,
   setEntityRegistryMeta,
+  setTeamLogoMetadata,
   listParsedDemoEntityInputs,
   upsertPlayerCandidate,
   upsertTeamCandidate,

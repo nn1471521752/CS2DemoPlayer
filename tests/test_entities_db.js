@@ -18,6 +18,7 @@ const {
   listPendingTeamCandidates,
   replacePlayerCandidates,
   replaceTeamCandidates,
+  setTeamLogoMetadata,
   setEntityRegistryMeta,
 } = require('../src/main/db/entities.js');
 
@@ -124,7 +125,16 @@ function hasColumn(database, tableName, columnName) {
     );
   });
 
-  ['display_name', 'normalized_name', 'demo_count', 'approved_at', 'last_seen_at'].forEach((columnName) => {
+  [
+    'display_name',
+    'normalized_name',
+    'demo_count',
+    'approved_at',
+    'last_seen_at',
+    'hltv_team_url',
+    'hltv_logo_path',
+    'hltv_logo_updated_at',
+  ].forEach((columnName) => {
     assert.ok(
       hasColumn(database, 'teams', columnName),
       `expected teams to include '${columnName}'`,
@@ -145,6 +155,7 @@ function hasColumn(database, tableName, columnName) {
     'replacePlayerCandidates',
     'listApprovedTeams',
     'listApprovedPlayers',
+    'setTeamLogoMetadata',
   ].forEach((exportName) => {
     assert.strictEqual(typeof dbFacade[exportName], 'function', `expected db facade to export ${exportName}`);
   });
@@ -358,7 +369,24 @@ function hasColumn(database, tableName, columnName) {
   assert.strictEqual(approvedTeams[0].demoCount, 3);
   assert.strictEqual(approvedPlayers[0].demoCount, 3);
   assert.strictEqual(approvedPlayers[0].lastTeamName, 'Team Spirit');
+  assert.strictEqual(approvedTeams[0].hltvTeamUrl, '');
+  assert.strictEqual(approvedTeams[0].hltvLogoPath, '');
+  assert.strictEqual(approvedTeams[0].hltvLogoUpdatedAt, '');
   assert.strictEqual((await listAllPlayerCandidates(context)).length, 0, 'approved player should leave candidate table');
+
+  await setTeamLogoMetadata(context, 'team spirit', {
+    hltvTeamUrl: 'https://www.hltv.org/team/7020/spirit',
+    hltvLogoPath: 'E:/CS2DemoPlayer/CS2DemoPlayer/data/team-logos/team-spirit.png',
+    hltvLogoUpdatedAt: '2026-03-24T13:00:00.000Z',
+  });
+
+  const approvedTeamsWithLogo = await listApprovedTeams(context);
+  assert.strictEqual(approvedTeamsWithLogo[0].hltvTeamUrl, 'https://www.hltv.org/team/7020/spirit');
+  assert.strictEqual(
+    approvedTeamsWithLogo[0].hltvLogoPath,
+    'E:/CS2DemoPlayer/CS2DemoPlayer/data/team-logos/team-spirit.png',
+  );
+  assert.strictEqual(approvedTeamsWithLogo[0].hltvLogoUpdatedAt, '2026-03-24T13:00:00.000Z');
 
   console.log('entities db ok');
 })().catch((error) => {

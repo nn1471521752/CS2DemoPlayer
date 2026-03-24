@@ -294,7 +294,10 @@ const CREATE_TEAMS_TABLE_SQL = `
     normalized_name TEXT NOT NULL DEFAULT '',
     demo_count INTEGER NOT NULL DEFAULT 0,
     approved_at TEXT NOT NULL DEFAULT '',
-    last_seen_at TEXT NOT NULL DEFAULT ''
+    last_seen_at TEXT NOT NULL DEFAULT '',
+    hltv_team_url TEXT NOT NULL DEFAULT '',
+    hltv_logo_path TEXT NOT NULL DEFAULT '',
+    hltv_logo_updated_at TEXT NOT NULL DEFAULT ''
   );
 `;
 
@@ -487,6 +490,18 @@ function ensureColumns(database, hasColumn) {
 
   if (!hasColumn(database, 'teams', 'demo_count')) {
     database.run(`ALTER TABLE teams ADD COLUMN demo_count INTEGER NOT NULL DEFAULT 0;`);
+  }
+
+  if (!hasColumn(database, 'teams', 'hltv_team_url')) {
+    database.run(`ALTER TABLE teams ADD COLUMN hltv_team_url TEXT NOT NULL DEFAULT '';`);
+  }
+
+  if (!hasColumn(database, 'teams', 'hltv_logo_path')) {
+    database.run(`ALTER TABLE teams ADD COLUMN hltv_logo_path TEXT NOT NULL DEFAULT '';`);
+  }
+
+  if (!hasColumn(database, 'teams', 'hltv_logo_updated_at')) {
+    database.run(`ALTER TABLE teams ADD COLUMN hltv_logo_updated_at TEXT NOT NULL DEFAULT '';`);
   }
 
   if (!hasColumn(database, 'players', 'last_team_name')) {
