@@ -1,6 +1,7 @@
 const assert = require('assert');
 
 const {
+  downloadLogoWithPage,
   extractMatchTeamAssets,
   syncTeamLogoFromRecentMatches,
 } = require('../src/main/hltv-team-logo.js');
@@ -34,6 +35,47 @@ assert.deepStrictEqual(
 );
 
 (async () => {
+  const writtenFiles = [];
+  const downloadResult = await downloadLogoWithPage(
+    {
+      async evaluate(pageFunction, logoUrl) {
+        void pageFunction;
+        assert.strictEqual(
+          logoUrl,
+          'https://img-cdn.hltv.org/teamlogo/spirit.png',
+          'should fetch the requested logo URL inside the browser page context',
+        );
+        return {
+          ok: true,
+          status: 200,
+          bytes: [1, 2, 3, 4],
+        };
+      },
+    },
+    'https://img-cdn.hltv.org/teamlogo/spirit.png',
+    'E:\\CS2DemoPlayer\\CS2DemoPlayer\\data\\team-logos\\team-spirit.png',
+    {
+      mkdir: async () => {},
+      writeFile: async (filePath, buffer) => {
+        writtenFiles.push([filePath, Buffer.from(buffer).toString('hex')]);
+      },
+    },
+  );
+
+  assert.deepStrictEqual(
+    downloadResult,
+    {
+      filePath: 'E:\\CS2DemoPlayer\\CS2DemoPlayer\\data\\team-logos\\team-spirit.png',
+    },
+    'should persist downloaded logo bytes from the browser page context',
+  );
+
+  assert.deepStrictEqual(
+    writtenFiles,
+    [['E:\\CS2DemoPlayer\\CS2DemoPlayer\\data\\team-logos\\team-spirit.png', '01020304']],
+    'should write the browser-fetched bytes to the requested local path',
+  );
+
   const downloadCalls = [];
   const pageCalls = [];
   const result = await syncTeamLogoFromRecentMatches({

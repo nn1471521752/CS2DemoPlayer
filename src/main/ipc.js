@@ -68,6 +68,7 @@ const {
   createDefaultHltvRuntime,
 } = require('./hltv-runtime');
 const {
+  downloadLogoWithPage,
   readMatchTeamAssetsFromPage,
   syncTeamLogoFromRecentMatches,
 } = require('./hltv-team-logo');
@@ -175,6 +176,7 @@ async function syncApprovedTeamLogo({ teamKey, displayName }) {
     teamKey,
     displayName,
     cacheDirectoryPath: teamLogoCacheDirectoryPath,
+    downloadLogo: (logoUrl, logoPath) => downloadLogoWithPage(session.page, logoUrl, logoPath),
     readMatchTeamAssets: async (matchMeta) => {
       await session.page.goto(matchMeta.matchUrl, { waitUntil: 'domcontentloaded' });
       await session.page.waitForLoadState('domcontentloaded');

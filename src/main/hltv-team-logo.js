@@ -123,6 +123,38 @@ async function downloadLogoToPath(logoUrl, logoPath) {
   return { filePath: normalizedLogoPath };
 }
 
+async function downloadLogoWithPage(page, logoUrl, logoPath, fileOps = {}) {
+  if (!page || typeof page.evaluate !== 'function') {
+    throw new Error('A Playwright page is required to download a team logo with browser context.');
+  }
+
+  const normalizedLogoUrl = normalizeText(logoUrl);
+  const normalizedLogoPath = normalizeText(logoPath);
+  if (!normalizedLogoUrl || !normalizedLogoPath) {
+    throw new Error('Both logoUrl and logoPath are required.');
+  }
+
+  const mkdir = typeof fileOps.mkdir === 'function' ? fileOps.mkdir : fs.promises.mkdir;
+  const writeFile = typeof fileOps.writeFile === 'function' ? fileOps.writeFile : fs.promises.writeFile;
+  const responsePayload = await page.evaluate(async (logoDownloadUrl) => {
+    const response = await fetch(logoDownloadUrl);
+    const bytes = Array.from(new Uint8Array(await response.arrayBuffer()));
+    return {
+      ok: response.ok,
+      status: response.status,
+      bytes,
+    };
+  }, normalizedLogoUrl);
+
+  if (!responsePayload?.ok) {
+    throw new Error(`Failed to download logo in browser context: ${responsePayload?.status || 'unknown'}`);
+  }
+
+  await mkdir(require('path').dirname(normalizedLogoPath), { recursive: true });
+  await writeFile(normalizedLogoPath, Buffer.from(responsePayload.bytes || []));
+  return { filePath: normalizedLogoPath };
+}
+
 async function syncTeamLogoFromRecentMatches(options = {}) {
   const recentMatches = Array.isArray(options.recentMatches) ? options.recentMatches : [];
   const teamKey = normalizeText(options.teamKey);
@@ -164,6 +196,7 @@ async function syncTeamLogoFromRecentMatches(options = {}) {
 }
 
 module.exports = {
+  downloadLogoWithPage,
   downloadLogoToPath,
   extractMatchTeamAssets,
   findRecentMatchForTeam,
