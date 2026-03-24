@@ -6,6 +6,12 @@ const initSqlJs = require('sql.js');
 const { getDemoByChecksum: getDemoByChecksumInternal } = require('./demo');
 const { runMigrations } = require('./migrations');
 const { getDebugInfo: getDebugInfoInternal } = require('./debug');
+const {
+  getEntityRegistryMeta: getEntityRegistryMetaInternal,
+  listPendingTeamCandidates: listPendingTeamCandidatesInternal,
+  setEntityRegistryMeta: setEntityRegistryMetaInternal,
+  upsertTeamCandidate: upsertTeamCandidateInternal,
+} = require('./entities');
 
 const projectRoot = path.resolve(__dirname, '../../..');
 const dataDirectoryPath = path.join(projectRoot, 'data');
@@ -1971,6 +1977,32 @@ async function getDebugInfo() {
   });
 }
 
+async function getEntityRegistryMeta(metaKey) {
+  return getEntityRegistryMetaInternal({
+    getDatabase,
+    getOne,
+  }, metaKey);
+}
+
+async function setEntityRegistryMeta(metaKey, metaValue, updatedAt = '') {
+  return setEntityRegistryMetaInternal({
+    getDatabase,
+  }, metaKey, metaValue, updatedAt);
+}
+
+async function upsertTeamCandidate(candidate) {
+  return upsertTeamCandidateInternal({
+    getDatabase,
+  }, candidate);
+}
+
+async function listPendingTeamCandidates() {
+  return listPendingTeamCandidatesInternal({
+    getDatabase,
+    getAll,
+  });
+}
+
 module.exports = {
   computeDemoChecksum,
   getDemoByChecksum,
@@ -1987,5 +2019,9 @@ module.exports = {
   getRoundClockStates,
   getCachedRoundsCount,
   getDebugInfo,
+  getEntityRegistryMeta,
+  setEntityRegistryMeta,
+  upsertTeamCandidate,
+  listPendingTeamCandidates,
   databaseFilePath,
 };
