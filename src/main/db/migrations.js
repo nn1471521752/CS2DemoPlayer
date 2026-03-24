@@ -279,6 +279,122 @@ const CREATE_ROUND_CLOCK_STATES_INDEX_SQL = `
   ON round_clock_states (checksum, round_number, tick);
 `;
 
+const CREATE_ENTITY_REGISTRY_META_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS entity_registry_meta (
+    meta_key TEXT PRIMARY KEY,
+    meta_value TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT ''
+  );
+`;
+
+const CREATE_TEAMS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS teams (
+    team_key TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL DEFAULT '',
+    normalized_name TEXT NOT NULL DEFAULT '',
+    approved_at TEXT NOT NULL DEFAULT '',
+    last_seen_at TEXT NOT NULL DEFAULT ''
+  );
+`;
+
+const CREATE_TEAMS_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_teams_normalized_name
+  ON teams (normalized_name);
+`;
+
+const CREATE_PLAYERS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS players (
+    steamid TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL DEFAULT '',
+    last_team_key TEXT NOT NULL DEFAULT '',
+    approved_at TEXT NOT NULL DEFAULT '',
+    last_seen_at TEXT NOT NULL DEFAULT ''
+  );
+`;
+
+const CREATE_PLAYERS_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_players_last_team_key
+  ON players (last_team_key);
+`;
+
+const CREATE_TEAM_CANDIDATES_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS team_candidates (
+    team_key TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL DEFAULT '',
+    normalized_name TEXT NOT NULL DEFAULT '',
+    evidence_hash TEXT NOT NULL DEFAULT '',
+    state TEXT NOT NULL DEFAULT 'pending',
+    demo_count INTEGER NOT NULL DEFAULT 0,
+    last_demo_checksum TEXT NOT NULL DEFAULT '',
+    last_demo_name TEXT NOT NULL DEFAULT '',
+    last_seen_at TEXT NOT NULL DEFAULT '',
+    last_scanned_at TEXT NOT NULL DEFAULT '',
+    reviewed_at TEXT NOT NULL DEFAULT ''
+  );
+`;
+
+const CREATE_TEAM_CANDIDATES_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_team_candidates_state
+  ON team_candidates (state, last_scanned_at);
+`;
+
+const CREATE_PLAYER_CANDIDATES_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS player_candidates (
+    steamid TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL DEFAULT '',
+    last_team_key TEXT NOT NULL DEFAULT '',
+    last_team_name TEXT NOT NULL DEFAULT '',
+    evidence_hash TEXT NOT NULL DEFAULT '',
+    state TEXT NOT NULL DEFAULT 'pending',
+    demo_count INTEGER NOT NULL DEFAULT 0,
+    last_demo_checksum TEXT NOT NULL DEFAULT '',
+    last_demo_name TEXT NOT NULL DEFAULT '',
+    last_seen_at TEXT NOT NULL DEFAULT '',
+    last_scanned_at TEXT NOT NULL DEFAULT '',
+    reviewed_at TEXT NOT NULL DEFAULT ''
+  );
+`;
+
+const CREATE_PLAYER_CANDIDATES_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_player_candidates_state
+  ON player_candidates (state, last_scanned_at);
+`;
+
+const CREATE_TEAM_DEMO_LINKS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS team_demo_links (
+    team_key TEXT NOT NULL,
+    checksum TEXT NOT NULL,
+    first_seen_at TEXT NOT NULL DEFAULT '',
+    last_seen_at TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (team_key, checksum),
+    FOREIGN KEY (team_key) REFERENCES teams(team_key) ON DELETE CASCADE,
+    FOREIGN KEY (checksum) REFERENCES demos(checksum) ON DELETE CASCADE
+  );
+`;
+
+const CREATE_TEAM_DEMO_LINKS_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_team_demo_links_checksum
+  ON team_demo_links (checksum);
+`;
+
+const CREATE_PLAYER_DEMO_LINKS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS player_demo_links (
+    steamid TEXT NOT NULL,
+    checksum TEXT NOT NULL,
+    team_key TEXT NOT NULL DEFAULT '',
+    first_seen_at TEXT NOT NULL DEFAULT '',
+    last_seen_at TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (steamid, checksum),
+    FOREIGN KEY (steamid) REFERENCES players(steamid) ON DELETE CASCADE,
+    FOREIGN KEY (checksum) REFERENCES demos(checksum) ON DELETE CASCADE
+  );
+`;
+
+const CREATE_PLAYER_DEMO_LINKS_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_player_demo_links_checksum
+  ON player_demo_links (checksum);
+`;
+
 const MIGRATION_BATCH = [
   CREATE_DEMOS_TABLE_SQL,
   UPDATE_DISPLAY_NAME_SQL,
@@ -304,6 +420,19 @@ const MIGRATION_BATCH = [
   CREATE_ROUND_BOMB_EVENTS_INDEX_SQL,
   CREATE_ROUND_CLOCK_STATES_TABLE_SQL,
   CREATE_ROUND_CLOCK_STATES_INDEX_SQL,
+  CREATE_ENTITY_REGISTRY_META_TABLE_SQL,
+  CREATE_TEAMS_TABLE_SQL,
+  CREATE_TEAMS_INDEX_SQL,
+  CREATE_PLAYERS_TABLE_SQL,
+  CREATE_PLAYERS_INDEX_SQL,
+  CREATE_TEAM_CANDIDATES_TABLE_SQL,
+  CREATE_TEAM_CANDIDATES_INDEX_SQL,
+  CREATE_PLAYER_CANDIDATES_TABLE_SQL,
+  CREATE_PLAYER_CANDIDATES_INDEX_SQL,
+  CREATE_TEAM_DEMO_LINKS_TABLE_SQL,
+  CREATE_TEAM_DEMO_LINKS_INDEX_SQL,
+  CREATE_PLAYER_DEMO_LINKS_TABLE_SQL,
+  CREATE_PLAYER_DEMO_LINKS_INDEX_SQL,
 ];
 
 function runBatch(database, statements) {
