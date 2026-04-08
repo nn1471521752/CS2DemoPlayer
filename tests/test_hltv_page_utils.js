@@ -4,6 +4,7 @@ const {
   getHltvActionLabel,
   normalizeHltvRecentMatchesState,
   normalizeHltvPageStatus,
+  shouldShowHltvStatusPanel,
   shouldAutoRefreshHltvState,
 } = require('../src/renderer/js/ui/hltv-page-utils.js');
 
@@ -77,6 +78,18 @@ assert.strictEqual(
   shouldAutoRefreshHltvState({ status: 'loading', matches: [] }),
   false,
   'should not start a second refresh while the startup load is already running',
+);
+
+assert.strictEqual(
+  shouldShowHltvStatusPanel('success'),
+  false,
+  'should hide the status panel once discovery state is successfully loaded',
+);
+
+assert.strictEqual(
+  shouldShowHltvStatusPanel('loading'),
+  true,
+  'should keep the status panel visible while discovery state is loading',
 );
 
 console.log('hltv page utils ok');

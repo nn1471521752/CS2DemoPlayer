@@ -26,6 +26,15 @@ const {
   upsertPlayerCandidate: upsertPlayerCandidateInternal,
   upsertTeamCandidate: upsertTeamCandidateInternal,
 } = require('./entities');
+const {
+  deleteAnalysisQueueItem: deleteAnalysisQueueItemInternal,
+  deleteInspirationCard: deleteInspirationCardInternal,
+  getInspirationCard: getInspirationCardInternal,
+  listAnalysisQueueItems: listAnalysisQueueItemsInternal,
+  listInspirationCards: listInspirationCardsInternal,
+  upsertAnalysisQueueItem: upsertAnalysisQueueItemInternal,
+  upsertInspirationCard: upsertInspirationCardInternal,
+} = require('./discovery');
 
 const projectRoot = path.resolve(__dirname, '../../..');
 const dataDirectoryPath = path.join(projectRoot, 'data');
@@ -2102,6 +2111,51 @@ async function listApprovedPlayers() {
   });
 }
 
+async function listAnalysisQueueItems() {
+  return listAnalysisQueueItemsInternal({
+    getDatabase,
+    getAll,
+  });
+}
+
+async function upsertAnalysisQueueItem(item = {}) {
+  return upsertAnalysisQueueItemInternal({
+    getDatabase,
+  }, item);
+}
+
+async function deleteAnalysisQueueItem(matchId) {
+  return deleteAnalysisQueueItemInternal({
+    getDatabase,
+  }, matchId);
+}
+
+async function listInspirationCards() {
+  return listInspirationCardsInternal({
+    getDatabase,
+    getAll,
+  });
+}
+
+async function getInspirationCard(matchId) {
+  return getInspirationCardInternal({
+    getDatabase,
+    getOne,
+  }, matchId);
+}
+
+async function upsertInspirationCard(card = {}) {
+  return upsertInspirationCardInternal({
+    getDatabase,
+  }, card);
+}
+
+async function deleteInspirationCard(matchId) {
+  return deleteInspirationCardInternal({
+    getDatabase,
+  }, matchId);
+}
+
 async function listParsedDemoEntityInputs() {
   return listParsedDemoEntityInputsInternal({
     getDatabase,
@@ -2143,5 +2197,12 @@ module.exports = {
   ignorePlayerCandidates,
   listApprovedTeams,
   listApprovedPlayers,
+  listAnalysisQueueItems,
+  upsertAnalysisQueueItem,
+  deleteAnalysisQueueItem,
+  listInspirationCards,
+  getInspirationCard,
+  upsertInspirationCard,
+  deleteInspirationCard,
   databaseFilePath,
 };

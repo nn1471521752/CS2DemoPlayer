@@ -401,6 +401,44 @@ const CREATE_PLAYER_DEMO_LINKS_INDEX_SQL = `
   ON player_demo_links (checksum);
 `;
 
+const CREATE_HLTV_ANALYSIS_QUEUE_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS hltv_analysis_queue (
+    match_id TEXT PRIMARY KEY,
+    match_url TEXT NOT NULL DEFAULT '',
+    team1_name TEXT NOT NULL DEFAULT '',
+    team2_name TEXT NOT NULL DEFAULT '',
+    event_name TEXT NOT NULL DEFAULT '',
+    queue_reason TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'queued',
+    created_at TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT ''
+  );
+`;
+
+const CREATE_HLTV_ANALYSIS_QUEUE_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_hltv_analysis_queue_status_updated_at
+  ON hltv_analysis_queue (status, updated_at);
+`;
+
+const CREATE_HLTV_INSPIRATION_CARDS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS hltv_inspiration_cards (
+    match_id TEXT PRIMARY KEY,
+    match_url TEXT NOT NULL DEFAULT '',
+    team1_name TEXT NOT NULL DEFAULT '',
+    team2_name TEXT NOT NULL DEFAULT '',
+    event_name TEXT NOT NULL DEFAULT '',
+    title TEXT NOT NULL DEFAULT '',
+    note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT ''
+  );
+`;
+
+const CREATE_HLTV_INSPIRATION_CARDS_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_hltv_inspiration_cards_updated_at
+  ON hltv_inspiration_cards (updated_at);
+`;
+
 const MIGRATION_BATCH = [
   CREATE_DEMOS_TABLE_SQL,
   UPDATE_DISPLAY_NAME_SQL,
@@ -439,6 +477,10 @@ const MIGRATION_BATCH = [
   CREATE_TEAM_DEMO_LINKS_INDEX_SQL,
   CREATE_PLAYER_DEMO_LINKS_TABLE_SQL,
   CREATE_PLAYER_DEMO_LINKS_INDEX_SQL,
+  CREATE_HLTV_ANALYSIS_QUEUE_TABLE_SQL,
+  CREATE_HLTV_ANALYSIS_QUEUE_INDEX_SQL,
+  CREATE_HLTV_INSPIRATION_CARDS_TABLE_SQL,
+  CREATE_HLTV_INSPIRATION_CARDS_INDEX_SQL,
 ];
 
 function runBatch(database, statements) {

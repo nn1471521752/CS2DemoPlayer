@@ -166,17 +166,99 @@
               <div class="page-header-copy">
                 <div class="page-eyebrow">External Source</div>
                 <h3>HLTV</h3>
-                <p class="page-subtitle">抓最近比赛，下载 HLTV archive，并把可播放的 `.dem` 提取到本地工作流。</p>
               </div>
               <div class="page-header-actions">
-                <button id="btn-hltv-refresh" type="button">Fetch Recent Matches</button>
+                <button id="btn-hltv-refresh" type="button">刷新</button>
               </div>
             </div>
 
-            <div id="hltv-status" class="hltv-status-panel">Ready to fetch recent matches.</div>
+            <div id="hltv-discovery-summary" class="page-summary-strip"></div>
 
-            <div id="hltv-match-list" class="hltv-match-list">
-              <div class="demo-empty">No recent matches loaded.</div>
+            <div id="hltv-status" class="hltv-status-panel is-hidden">刷新中...</div>
+
+            <div class="hltv-discovery-toolbar">
+              <label class="hltv-filter-field hltv-filter-field-search" for="hltv-filter-search">
+                <input id="hltv-filter-search" class="hltv-filter-input" type="search" placeholder="搜索队伍、赛事">
+              </label>
+              <label class="hltv-filter-toggle" for="hltv-filter-demo-only">
+                <input id="hltv-filter-demo-only" type="checkbox">
+                <span>有 demo</span>
+              </label>
+              <label class="hltv-filter-toggle" for="hltv-filter-close-only">
+                <input id="hltv-filter-close-only" type="checkbox">
+                <span>胶着</span>
+              </label>
+              <label class="hltv-filter-toggle" for="hltv-filter-featured-only">
+                <input id="hltv-filter-featured-only" type="checkbox">
+                <span>大赛</span>
+              </label>
+              <button id="btn-hltv-reset-filters" class="hltv-filter-reset" type="button">重置</button>
+            </div>
+
+            <div class="hltv-discovery-layout">
+              <div class="hltv-discovery-main">
+                <section class="hltv-discovery-section">
+                  <div class="hltv-section-header">
+                    <div>
+                      <div class="library-section-label">Recommended</div>
+                      <div id="hltv-recommended-summary" class="hltv-section-summary"></div>
+                    </div>
+                  </div>
+                  <div id="hltv-recommended-list" class="hltv-match-list hltv-match-list-static">
+                    <div class="demo-empty">刷新后查看推荐。</div>
+                  </div>
+                </section>
+
+                <section class="hltv-discovery-section">
+                  <div class="hltv-section-header">
+                    <div>
+                      <div class="library-section-label">Browse</div>
+                      <div id="hltv-browse-summary" class="hltv-section-summary"></div>
+                    </div>
+                  </div>
+                  <div id="hltv-match-list" class="hltv-match-list">
+                    <div class="demo-empty">刷新后查看比赛。</div>
+                  </div>
+                </section>
+              </div>
+
+              <aside class="hltv-discovery-sidebar">
+                <section class="hltv-discovery-section hltv-side-section">
+                  <div class="hltv-section-header">
+                    <div>
+                      <div class="library-section-label">Analysis Queue</div>
+                      <div id="hltv-queue-summary" class="hltv-section-summary">Queue is empty.</div>
+                    </div>
+                  </div>
+                  <div id="hltv-queue-list" class="hltv-side-list">
+                    <div class="demo-empty">Queue is empty.</div>
+                  </div>
+                </section>
+
+                <section class="hltv-discovery-section hltv-side-section">
+                  <div class="hltv-section-header">
+                    <div>
+                      <div class="library-section-label">Inspiration Cards</div>
+                      <div id="hltv-card-summary" class="hltv-section-summary">No inspiration cards saved.</div>
+                    </div>
+                  </div>
+
+                  <div class="hltv-card-editor">
+                    <div id="hltv-card-match-label" class="hltv-card-match-label">Select a match to save a card.</div>
+                    <input id="hltv-card-title" class="hltv-card-input" type="text" placeholder="Card title">
+                    <textarea id="hltv-card-note" class="hltv-card-textarea" placeholder="Why is this match worth watching?"></textarea>
+                    <div class="hltv-card-toolbar">
+                      <button id="btn-hltv-card-save" class="hltv-card-action is-primary" type="button">Save Card</button>
+                      <button id="btn-hltv-card-delete" class="hltv-card-action" type="button">Delete</button>
+                      <button id="btn-hltv-card-clear" class="hltv-card-action" type="button">Clear</button>
+                    </div>
+                  </div>
+
+                  <div id="hltv-card-list" class="hltv-side-list">
+                    <div class="demo-empty">No inspiration cards saved.</div>
+                  </div>
+                </section>
+              </aside>
             </div>
           </div>
         </section>
@@ -226,6 +308,7 @@
   <script src="js/ui/entities-page-utils.js"></script>
   <script src="js/ui/hltv-page-utils.js"></script>
   <script src="js/ui/hltv-results-view-utils.js"></script>
+  <script src="js/ui/hltv-inspiration-view-utils.js"></script>
   <script src="js/ui/library.js"></script>
   <script src="js/ui/entities-page.js"></script>
   <script src="js/ui/hltv-page.js"></script>

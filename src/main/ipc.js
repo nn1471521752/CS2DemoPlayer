@@ -38,6 +38,13 @@ const {
   listParsedDemoEntityInputs,
   listPendingPlayerCandidates,
   listPendingTeamCandidates,
+  listAnalysisQueueItems,
+  upsertAnalysisQueueItem,
+  deleteAnalysisQueueItem,
+  listInspirationCards,
+  getInspirationCard,
+  upsertInspirationCard,
+  deleteInspirationCard,
   listDemos,
   renameDemo,
   replacePlayerCandidates,
@@ -77,6 +84,9 @@ const {
   createEntitiesService,
 } = require('./entities-service');
 const {
+  createHltvDiscoveryService,
+} = require('./hltv-discovery-service');
+const {
   isSupportedDemoPath,
 } = require('./demo-path-utils');
 
@@ -93,6 +103,17 @@ let selectedDemoFileStats = null;
 const roundCacheUpgradeJobs = new Map();
 const hltvService = createDefaultHltvService();
 const hltvRuntime = createDefaultHltvRuntime();
+const hltvDiscoveryService = createHltvDiscoveryService({
+  getRecentMatchesState: async () => hltvRuntime.getRecentMatchesState(),
+  refreshRecentMatches: async () => hltvRuntime.refreshRecentMatches(),
+  listAnalysisQueueItems,
+  upsertAnalysisQueueItem,
+  deleteAnalysisQueueItem,
+  listInspirationCards,
+  getInspirationCard,
+  upsertInspirationCard,
+  deleteInspirationCard,
+});
 const entitiesService = createEntitiesService({
   repository: createDbFacadeEntitiesRepository({
     getEntityRegistryMeta,
@@ -1866,6 +1887,30 @@ async function handleHltvListRecentMatches() {
   return hltvRuntime.refreshRecentMatches();
 }
 
+async function handleHltvGetDiscoveryState() {
+  return hltvDiscoveryService.getDiscoveryState();
+}
+
+async function handleHltvRefreshDiscoveryState() {
+  return hltvDiscoveryService.refreshDiscoveryState();
+}
+
+async function handleHltvQueueMatch(_event, payload = {}) {
+  return hltvDiscoveryService.queueMatch(payload);
+}
+
+async function handleHltvRemoveQueuedMatch(_event, payload = {}) {
+  return hltvDiscoveryService.removeQueuedMatch(payload);
+}
+
+async function handleHltvSaveInspirationCard(_event, payload = {}) {
+  return hltvDiscoveryService.saveInspirationCard(payload);
+}
+
+async function handleHltvDeleteInspirationCard(_event, payload = {}) {
+  return hltvDiscoveryService.deleteInspirationCard(payload);
+}
+
 async function handleHltvDownloadDemo(_event, payload = {}) {
   return hltvService.downloadDemoForMatch(payload);
 }
@@ -1893,6 +1938,12 @@ ipcMain.handle('load-demo-from-db', handleLoadDemoFromDb);
 ipcMain.handle('hltv-get-recent-matches-state', handleHltvGetRecentMatchesState);
 ipcMain.handle('hltv-refresh-recent-matches', handleHltvRefreshRecentMatches);
 ipcMain.handle('hltv-list-recent-matches', handleHltvListRecentMatches);
+ipcMain.handle('hltv-get-discovery-state', handleHltvGetDiscoveryState);
+ipcMain.handle('hltv-refresh-discovery-state', handleHltvRefreshDiscoveryState);
+ipcMain.handle('hltv-queue-match', handleHltvQueueMatch);
+ipcMain.handle('hltv-remove-queued-match', handleHltvRemoveQueuedMatch);
+ipcMain.handle('hltv-save-inspiration-card', handleHltvSaveInspirationCard);
+ipcMain.handle('hltv-delete-inspiration-card', handleHltvDeleteInspirationCard);
 ipcMain.handle('hltv-download-demo', handleHltvDownloadDemo);
 ipcMain.handle('entities-get-page-state', handleEntitiesGetPageState);
 ipcMain.handle('entities-approve-candidates', handleEntitiesApproveCandidates);

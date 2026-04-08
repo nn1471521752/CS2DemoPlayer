@@ -20,6 +20,11 @@
     return normalizedState.status === 'idle';
   }
 
+  function shouldShowHltvStatusPanel(status) {
+    const normalizedStatus = normalizeHltvPageStatus(status);
+    return normalizedStatus === 'loading' || normalizedStatus === 'error';
+  }
+
   function getHltvActionLabel(matchItem = {}) {
     if (matchItem?.isDownloading) {
       return '下载中...';
@@ -33,6 +38,7 @@
     getHltvActionLabel,
     normalizeHltvRecentMatchesState,
     normalizeHltvPageStatus,
+    shouldShowHltvStatusPanel,
     shouldAutoRefreshHltvState,
   };
 
@@ -44,6 +50,7 @@
     globalScope.getHltvActionLabel = getHltvActionLabel;
     globalScope.normalizeHltvRecentMatchesState = normalizeHltvRecentMatchesState;
     globalScope.normalizeHltvPageStatus = normalizeHltvPageStatus;
+    globalScope.shouldShowHltvStatusPanel = shouldShowHltvStatusPanel;
     globalScope.shouldAutoRefreshHltvState = shouldAutoRefreshHltvState;
   }
 }(typeof globalThis !== 'undefined' ? globalThis : window));
