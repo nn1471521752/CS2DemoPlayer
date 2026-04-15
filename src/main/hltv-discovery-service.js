@@ -32,6 +32,7 @@ function buildEmptyDiscoveryState() {
     status: 'idle',
     detail: '',
     updatedAt: '',
+    cacheSummary: null,
     summary: {
       totalMatches: 0,
       recommendedMatches: 0,
@@ -77,6 +78,9 @@ function createHltvDiscoveryService(deps = {}) {
   const getInspirationCard = deps.getInspirationCard;
   const upsertInspirationCard = deps.upsertInspirationCard;
   const deleteInspirationCard = deps.deleteInspirationCard;
+  const cacheRecentMatches = typeof deps.cacheRecentMatches === 'function'
+    ? deps.cacheRecentMatches
+    : null;
 
   [
     ['getRecentMatchesState', getRecentMatchesState],
@@ -98,6 +102,17 @@ function createHltvDiscoveryService(deps = {}) {
     const normalizedMatches = Array.isArray(runtimeState.matches)
       ? runtimeState.matches.map((match) => normalizeMatchMeta(match))
       : [];
+    let cacheSummary = null;
+
+    if (cacheRecentMatches && normalizedMatches.length > 0) {
+      try {
+        cacheSummary = await cacheRecentMatches(normalizedMatches);
+      } catch (error) {
+        cacheSummary = {
+          error: normalizeText(error?.message || error),
+        };
+      }
+    }
 
     const [queueItems, cardItems] = await Promise.all([
       listAnalysisQueueItems(),
@@ -125,6 +140,7 @@ function createHltvDiscoveryService(deps = {}) {
       status: normalizeText(runtimeState.status) || 'idle',
       detail: normalizeText(runtimeState.detail),
       updatedAt: normalizeText(runtimeState.updatedAt),
+      cacheSummary,
       summary: {
         totalMatches: matches.length,
         recommendedMatches: matches.filter((match) => match.recommendationScore >= DISCOVERY_RECOMMENDATION_THRESHOLD).length,

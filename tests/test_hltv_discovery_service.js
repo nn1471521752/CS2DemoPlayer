@@ -8,6 +8,7 @@ const {
 (async () => {
   const queueItems = [];
   const cardItems = [];
+  const cachedMatchBatches = [];
   let runtimeState = {
     status: 'idle',
     detail: '',
@@ -49,6 +50,19 @@ const {
         cardItems.splice(index, 1);
       }
     },
+    cacheRecentMatches: async (matches) => {
+      cachedMatchBatches.push(matches);
+      return {
+        insertedMatches: matches.length,
+        updatedMatches: 0,
+        insertedTeams: 0,
+        updatedTeams: 0,
+        insertedPlayers: 0,
+        updatedPlayers: 0,
+        insertedMaps: 0,
+        updatedMaps: 0,
+      };
+    },
   });
 
   assert.ok(
@@ -64,6 +78,7 @@ const {
       status: 'idle',
       detail: '',
       updatedAt: '',
+      cacheSummary: null,
       summary: {
         totalMatches: 0,
         recommendedMatches: 0,
@@ -135,6 +150,8 @@ const {
   assert.strictEqual(state.matches.length, 2);
   assert.strictEqual(state.queue.length, 1);
   assert.strictEqual(state.cards.length, 1);
+  assert.strictEqual(state.cacheSummary.insertedMatches, 2, 'should expose cache summary after runtime matches are cached');
+  assert.strictEqual(cachedMatchBatches.length > 0, true, 'should forward normalized runtime matches to cache service');
 
   const topMatch = state.matches[0];
   const lowSignalMatch = state.matches[1];

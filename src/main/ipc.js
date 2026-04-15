@@ -62,6 +62,13 @@ const {
   getCachedRoundsCount,
   getDebugInfo,
   setTeamLogoMetadata,
+  getHltvCacheSummary,
+  searchHltvCachedMatches,
+  searchHltvCachedPlayers,
+  searchHltvCachedTeams,
+  updateHltvCachedDemoDownload,
+  updateHltvCachedMapParsedDemo,
+  upsertHltvCacheMatches,
 } = require('./db');
 const {
   createDefaultHltvService,
@@ -87,6 +94,9 @@ const {
   createHltvDiscoveryService,
 } = require('./hltv-discovery-service');
 const {
+  createHltvCacheService,
+} = require('./hltv-cache-service');
+const {
   isSupportedDemoPath,
 } = require('./demo-path-utils');
 
@@ -103,9 +113,15 @@ let selectedDemoFileStats = null;
 const roundCacheUpgradeJobs = new Map();
 const hltvService = createDefaultHltvService();
 const hltvRuntime = createDefaultHltvRuntime();
+const hltvCacheService = createHltvCacheService({
+  upsertHltvCacheMatches,
+  updateHltvCachedDemoDownload,
+  updateHltvCachedMapParsedDemo,
+});
 const hltvDiscoveryService = createHltvDiscoveryService({
   getRecentMatchesState: async () => hltvRuntime.getRecentMatchesState(),
   refreshRecentMatches: async () => hltvRuntime.refreshRecentMatches(),
+  cacheRecentMatches: (matches) => hltvCacheService.cacheRecentMatches(matches),
   listAnalysisQueueItems,
   upsertAnalysisQueueItem,
   deleteAnalysisQueueItem,
@@ -850,6 +866,7 @@ async function handleAnalyzeDemo() {
 
 async function handleAnalyzeDemoFromPath(_event, payload = {}) {
   const demoPath = String(payload?.demoPath || '').trim();
+  const matchId = String(payload?.matchId || '').trim();
   if (!isSupportedDemoPath(demoPath)) {
     return buildAnalyzeError('Unsupported demo file path. Expected a .dem file.', { demoPath });
   }
@@ -860,7 +877,19 @@ async function handleAnalyzeDemoFromPath(_event, payload = {}) {
 
   resetSelection(demoPath);
   try {
-    return await performAnalyzeDemo();
+    const response = await performAnalyzeDemo();
+    if (response?.status === 'success' && matchId) {
+      try {
+        await hltvCacheService.markMapParsed({
+          matchId,
+          localDemoPath: demoPath,
+          checksum: selectedDemoChecksum,
+        });
+      } catch (error) {
+        console.warn(`[HLTV Cache] failed to mark parsed demo for match ${matchId}: ${error.message}`);
+      }
+    }
+    return response;
   } catch (error) {
     return buildAnalyzeError(`Failed to import demo: ${error.message}`, { demoPath });
   }
@@ -1912,7 +1941,24 @@ async function handleHltvDeleteInspirationCard(_event, payload = {}) {
 }
 
 async function handleHltvDownloadDemo(_event, payload = {}) {
-  return hltvService.downloadDemoForMatch(payload);
+  const response = await hltvService.downloadDemoForMatch(payload);
+  if (response?.ok !== false && response?.status !== 'error') {
+    try {
+      await hltvCacheService.markMatchDownload({
+        matchId: payload?.matchId,
+        downloadedDemoPath: response?.downloadedDemoPath,
+        downloadedFileSize: response?.downloadedFileSize,
+        playableDemoPaths: response?.playableDemoPaths,
+      });
+      return {
+        ...response,
+        cacheUpdated: true,
+      };
+    } catch (error) {
+      console.warn(`[HLTV Cache] failed to persist download metadata for ${payload?.matchId || 'unknown match'}: ${error.message}`);
+    }
+  }
+  return response;
 }
 
 async function handleEntitiesGetPageState() {
