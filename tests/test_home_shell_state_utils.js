@@ -13,6 +13,12 @@ assert.strictEqual(
 );
 
 assert.strictEqual(
+  normalizeHomeSectionId(HOME_SECTION_IDS.localLibrary),
+  HOME_SECTION_IDS.localLibrary,
+  'should keep the local library home section id',
+);
+
+assert.strictEqual(
   normalizeHomeSectionId(HOME_SECTION_IDS.entities),
   HOME_SECTION_IDS.entities,
   'should keep the entities home section id',
