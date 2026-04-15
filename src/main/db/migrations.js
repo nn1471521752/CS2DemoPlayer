@@ -439,6 +439,139 @@ const CREATE_HLTV_INSPIRATION_CARDS_INDEX_SQL = `
   ON hltv_inspiration_cards (updated_at);
 `;
 
+const CREATE_HLTV_MATCHES_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS hltv_matches (
+    match_id TEXT PRIMARY KEY,
+    match_url TEXT NOT NULL DEFAULT '',
+    team1_id TEXT NOT NULL DEFAULT '',
+    team1_name TEXT NOT NULL DEFAULT '',
+    team2_id TEXT NOT NULL DEFAULT '',
+    team2_name TEXT NOT NULL DEFAULT '',
+    team1_score INTEGER,
+    team2_score INTEGER,
+    event_id TEXT NOT NULL DEFAULT '',
+    event_name TEXT NOT NULL DEFAULT '',
+    match_format TEXT NOT NULL DEFAULT '',
+    match_time_label TEXT NOT NULL DEFAULT '',
+    match_timestamp_ms INTEGER,
+    has_demo INTEGER NOT NULL DEFAULT 0,
+    downloaded_demo_path TEXT NOT NULL DEFAULT '',
+    downloaded_file_size INTEGER NOT NULL DEFAULT 0,
+    playable_demo_paths_json TEXT NOT NULL DEFAULT '[]',
+    source TEXT NOT NULL DEFAULT 'hltv',
+    first_seen_at TEXT NOT NULL DEFAULT '',
+    last_seen_at TEXT NOT NULL DEFAULT '',
+    cache_updated_at TEXT NOT NULL DEFAULT ''
+  );
+`;
+
+const CREATE_HLTV_MATCHES_HAS_DEMO_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_hltv_matches_has_demo
+  ON hltv_matches (has_demo);
+`;
+
+const CREATE_HLTV_MATCHES_CACHE_UPDATED_AT_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_hltv_matches_cache_updated_at
+  ON hltv_matches (cache_updated_at);
+`;
+
+const CREATE_HLTV_MATCHES_TEAM1_NAME_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_hltv_matches_team1_name
+  ON hltv_matches (team1_name);
+`;
+
+const CREATE_HLTV_MATCHES_TEAM2_NAME_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_hltv_matches_team2_name
+  ON hltv_matches (team2_name);
+`;
+
+const CREATE_HLTV_MATCHES_EVENT_NAME_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_hltv_matches_event_name
+  ON hltv_matches (event_name);
+`;
+
+const CREATE_HLTV_MATCH_MAPS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS hltv_match_maps (
+    match_id TEXT NOT NULL,
+    map_index INTEGER NOT NULL DEFAULT 0,
+    map_name TEXT NOT NULL DEFAULT '',
+    map_slug TEXT NOT NULL DEFAULT '',
+    team1_score INTEGER,
+    team2_score INTEGER,
+    demo_url TEXT NOT NULL DEFAULT '',
+    demo_file_name TEXT NOT NULL DEFAULT '',
+    local_demo_path TEXT NOT NULL DEFAULT '',
+    parsed_demo_checksum TEXT NOT NULL DEFAULT '',
+    cache_updated_at TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (match_id, map_index),
+    FOREIGN KEY (match_id) REFERENCES hltv_matches(match_id) ON DELETE CASCADE
+  );
+`;
+
+const CREATE_HLTV_MATCH_MAPS_MAP_SLUG_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_hltv_match_maps_map_slug
+  ON hltv_match_maps (map_slug);
+`;
+
+const CREATE_HLTV_MATCH_MAPS_MATCH_ID_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_hltv_match_maps_match_id
+  ON hltv_match_maps (match_id);
+`;
+
+const CREATE_HLTV_MATCH_MAPS_LOCAL_DEMO_PATH_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_hltv_match_maps_local_demo_path
+  ON hltv_match_maps (local_demo_path);
+`;
+
+const CREATE_HLTV_TEAMS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS hltv_teams (
+    team_id TEXT PRIMARY KEY,
+    team_url TEXT NOT NULL DEFAULT '',
+    display_name TEXT NOT NULL DEFAULT '',
+    normalized_name TEXT NOT NULL DEFAULT '',
+    logo_url TEXT NOT NULL DEFAULT '',
+    logo_path TEXT NOT NULL DEFAULT '',
+    country TEXT NOT NULL DEFAULT '',
+    ranking INTEGER,
+    related_match_count INTEGER NOT NULL DEFAULT 0,
+    first_seen_at TEXT NOT NULL DEFAULT '',
+    last_seen_at TEXT NOT NULL DEFAULT '',
+    cache_updated_at TEXT NOT NULL DEFAULT ''
+  );
+`;
+
+const CREATE_HLTV_TEAMS_NORMALIZED_NAME_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_hltv_teams_normalized_name
+  ON hltv_teams (normalized_name);
+`;
+
+const CREATE_HLTV_PLAYERS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS hltv_players (
+    player_id TEXT PRIMARY KEY,
+    player_url TEXT NOT NULL DEFAULT '',
+    nickname TEXT NOT NULL DEFAULT '',
+    real_name TEXT NOT NULL DEFAULT '',
+    normalized_nickname TEXT NOT NULL DEFAULT '',
+    team_id TEXT NOT NULL DEFAULT '',
+    team_name TEXT NOT NULL DEFAULT '',
+    country TEXT NOT NULL DEFAULT '',
+    related_match_count INTEGER NOT NULL DEFAULT 0,
+    first_seen_at TEXT NOT NULL DEFAULT '',
+    last_seen_at TEXT NOT NULL DEFAULT '',
+    cache_updated_at TEXT NOT NULL DEFAULT ''
+  );
+`;
+
+const CREATE_HLTV_PLAYERS_NORMALIZED_NICKNAME_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_hltv_players_normalized_nickname
+  ON hltv_players (normalized_nickname);
+`;
+
+const CREATE_HLTV_PLAYERS_TEAM_ID_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_hltv_players_team_id
+  ON hltv_players (team_id);
+`;
+
 const MIGRATION_BATCH = [
   CREATE_DEMOS_TABLE_SQL,
   UPDATE_DISPLAY_NAME_SQL,
@@ -481,6 +614,21 @@ const MIGRATION_BATCH = [
   CREATE_HLTV_ANALYSIS_QUEUE_INDEX_SQL,
   CREATE_HLTV_INSPIRATION_CARDS_TABLE_SQL,
   CREATE_HLTV_INSPIRATION_CARDS_INDEX_SQL,
+  CREATE_HLTV_MATCHES_TABLE_SQL,
+  CREATE_HLTV_MATCHES_HAS_DEMO_INDEX_SQL,
+  CREATE_HLTV_MATCHES_CACHE_UPDATED_AT_INDEX_SQL,
+  CREATE_HLTV_MATCHES_TEAM1_NAME_INDEX_SQL,
+  CREATE_HLTV_MATCHES_TEAM2_NAME_INDEX_SQL,
+  CREATE_HLTV_MATCHES_EVENT_NAME_INDEX_SQL,
+  CREATE_HLTV_MATCH_MAPS_TABLE_SQL,
+  CREATE_HLTV_MATCH_MAPS_MAP_SLUG_INDEX_SQL,
+  CREATE_HLTV_MATCH_MAPS_MATCH_ID_INDEX_SQL,
+  CREATE_HLTV_MATCH_MAPS_LOCAL_DEMO_PATH_INDEX_SQL,
+  CREATE_HLTV_TEAMS_TABLE_SQL,
+  CREATE_HLTV_TEAMS_NORMALIZED_NAME_INDEX_SQL,
+  CREATE_HLTV_PLAYERS_TABLE_SQL,
+  CREATE_HLTV_PLAYERS_NORMALIZED_NICKNAME_INDEX_SQL,
+  CREATE_HLTV_PLAYERS_TEAM_ID_INDEX_SQL,
 ];
 
 function runBatch(database, statements) {
