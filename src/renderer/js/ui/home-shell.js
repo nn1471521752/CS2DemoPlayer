@@ -7,6 +7,11 @@
         shortLabel: 'DB',
       },
       {
+        id: HOME_SECTION_IDS.localLibrary,
+        label: '本地资料库',
+        shortLabel: 'HLDB',
+      },
+      {
         id: HOME_SECTION_IDS.entities,
         label: 'Entities',
         shortLabel: 'EN',
@@ -57,6 +62,7 @@
   function getHomePageElementsBySection() {
     return {
       [HOME_SECTION_IDS.demoLibrary]: demoLibraryPage,
+      [HOME_SECTION_IDS.localLibrary]: hltvLocalLibraryPage,
       [HOME_SECTION_IDS.entities]: entitiesPage,
       [HOME_SECTION_IDS.hltv]: hltvPage,
     };
@@ -75,6 +81,13 @@
 
     renderHomeNav();
     applyHomeNavCollapsedState();
+
+    if (
+      currentHomeSectionId === HOME_SECTION_IDS.localLibrary
+      && typeof loadHltvLocalLibraryState === 'function'
+    ) {
+      void loadHltvLocalLibraryState();
+    }
 
     if (
       currentHomeSectionId === HOME_SECTION_IDS.entities

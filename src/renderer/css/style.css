@@ -821,6 +821,82 @@ body {
   color: #fecaca;
 }
 
+.hltv-local-library-page-shell {
+  width: 100%;
+  height: 100%;
+}
+
+.local-library-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.local-library-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.local-library-match-maps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.local-library-map-chip {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #334155;
+  border-radius: 999px;
+  background: #0f141b;
+  color: #cbd5e1;
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
+.local-library-map-chip.is-empty {
+  color: #94a3b8;
+}
+
+.local-library-cache-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #1d4ed8;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.12);
+  color: #dbeafe;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 5px 10px;
+}
+
+.local-library-entity-row {
+  border: 1px solid #2b3340;
+  border-radius: 12px;
+  background: #11161d;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.local-library-entity-title {
+  color: #f8fafc;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.local-library-entity-meta {
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .hltv-discovery-toolbar {
   display: flex;
   align-items: center;

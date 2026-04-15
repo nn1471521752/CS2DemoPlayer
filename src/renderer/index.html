@@ -66,6 +66,53 @@
           </div>
         </section>
 
+        <section id="hltv-local-library-page" class="home-page is-hidden">
+          <div class="page-shell hltv-local-library-page-shell">
+            <div class="page-header">
+              <div class="page-header-copy">
+                <div class="page-eyebrow">Local HLTV Cache</div>
+                <h3>本地资料库</h3>
+                <p class="page-subtitle">本地搜索已缓存的 HLTV 比赛、战队和选手；需要新数据时去 HLTV 页手动刷新。</p>
+              </div>
+              <div class="page-header-actions">
+                <button id="btn-local-library-refresh" type="button">刷新本地</button>
+                <button id="btn-local-library-open-hltv" type="button">去 HLTV 拉新</button>
+              </div>
+            </div>
+
+            <div id="local-library-summary" class="page-summary-strip"></div>
+            <div id="local-library-status" class="hltv-status-panel is-hidden">加载中...</div>
+            <div id="local-library-tab-list" class="entities-tab-list"></div>
+
+            <section id="local-library-panel-matches" class="local-library-panel">
+              <div class="local-library-filter-bar">
+                <input id="local-library-match-search" class="entities-search-input" type="search" placeholder="搜索队伍、赛事、Match ID">
+                <input id="local-library-map-search" class="entities-search-input" type="search" placeholder="地图：ancient / mirage">
+                <label class="hltv-filter-toggle"><input id="local-library-filter-demo-only" type="checkbox"><span>有 demo</span></label>
+                <label class="hltv-filter-toggle"><input id="local-library-filter-downloaded-only" type="checkbox"><span>已下载</span></label>
+                <label class="hltv-filter-toggle"><input id="local-library-filter-parsed-only" type="checkbox"><span>已解析</span></label>
+                <label class="hltv-filter-toggle"><input id="local-library-filter-queued-only" type="checkbox"><span>队列</span></label>
+                <label class="hltv-filter-toggle"><input id="local-library-filter-cards-only" type="checkbox"><span>卡片</span></label>
+              </div>
+              <div id="local-library-match-list" class="hltv-match-list"></div>
+            </section>
+
+            <section id="local-library-panel-teams" class="local-library-panel is-hidden">
+              <div class="local-library-filter-bar">
+                <input id="local-library-team-search" class="entities-search-input" type="search" placeholder="搜索战队">
+              </div>
+              <div id="local-library-team-list" class="entities-list"></div>
+            </section>
+
+            <section id="local-library-panel-players" class="local-library-panel is-hidden">
+              <div class="local-library-filter-bar">
+                <input id="local-library-player-search" class="entities-search-input" type="search" placeholder="搜索选手 / Player ID">
+              </div>
+              <div id="local-library-player-list" class="entities-list"></div>
+            </section>
+          </div>
+        </section>
+
         <section id="entities-page" class="home-page is-hidden">
           <div class="page-shell entities-page-shell">
             <div class="page-header">
@@ -306,10 +353,12 @@
   <script src="js/ui/hud-slot-layout-utils.js"></script>
   <script src="js/ui/demo-library-page-utils.js"></script>
   <script src="js/ui/entities-page-utils.js"></script>
+  <script src="js/ui/hltv-local-library-page-utils.js"></script>
   <script src="js/ui/hltv-page-utils.js"></script>
   <script src="js/ui/hltv-results-view-utils.js"></script>
   <script src="js/ui/hltv-inspiration-view-utils.js"></script>
   <script src="js/ui/library.js"></script>
+  <script src="js/ui/hltv-local-library-page.js"></script>
   <script src="js/ui/entities-page.js"></script>
   <script src="js/ui/hltv-page.js"></script>
   <script src="js/ui/hud.js"></script>
