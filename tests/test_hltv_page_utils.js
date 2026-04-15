@@ -1,6 +1,7 @@
 const assert = require('assert');
 
 const {
+  formatHltvCacheSummaryText,
   getHltvActionLabel,
   normalizeHltvRecentMatchesState,
   normalizeHltvPageStatus,
@@ -90,6 +91,26 @@ assert.strictEqual(
   shouldShowHltvStatusPanel('loading'),
   true,
   'should keep the status panel visible while discovery state is loading',
+);
+
+assert.strictEqual(
+  formatHltvCacheSummaryText({}),
+  '',
+  'should hide empty cache summary text',
+);
+
+const cacheSummaryText = formatHltvCacheSummaryText({
+  insertedMatches: 12,
+  updatedMatches: 8,
+  insertedTeams: 3,
+});
+assert.ok(cacheSummaryText.includes('新增 12 场比赛'));
+assert.ok(cacheSummaryText.includes('更新 8 场比赛'));
+assert.ok(cacheSummaryText.includes('新增 3 支战队'));
+
+assert.ok(
+  formatHltvCacheSummaryText({ error: 'disk full' }).includes('本地缓存写入失败'),
+  'should explain cache write failures',
 );
 
 console.log('hltv page utils ok');

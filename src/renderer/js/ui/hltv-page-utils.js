@@ -34,7 +34,34 @@
     return playableDemoPaths.length > 0 ? '打开 demo' : '下载 demo';
   }
 
+  function formatHltvCacheSummaryText(cacheSummary = {}) {
+    if (!cacheSummary || typeof cacheSummary !== 'object') {
+      return '';
+    }
+
+    if (cacheSummary.error) {
+      return `本地缓存写入失败：${String(cacheSummary.error || '').trim()}`;
+    }
+
+    const parts = [];
+    if (Number(cacheSummary.insertedMatches) > 0) {
+      parts.push(`新增 ${Number(cacheSummary.insertedMatches)} 场比赛`);
+    }
+    if (Number(cacheSummary.updatedMatches) > 0) {
+      parts.push(`更新 ${Number(cacheSummary.updatedMatches)} 场比赛`);
+    }
+    if (Number(cacheSummary.insertedTeams) > 0) {
+      parts.push(`新增 ${Number(cacheSummary.insertedTeams)} 支战队`);
+    }
+    if (Number(cacheSummary.updatedTeams) > 0) {
+      parts.push(`更新 ${Number(cacheSummary.updatedTeams)} 支战队`);
+    }
+
+    return parts.join('，');
+  }
+
   const exportsObject = {
+    formatHltvCacheSummaryText,
     getHltvActionLabel,
     normalizeHltvRecentMatchesState,
     normalizeHltvPageStatus,
@@ -47,6 +74,7 @@
   }
 
   if (globalScope && typeof globalScope === 'object') {
+    globalScope.formatHltvCacheSummaryText = formatHltvCacheSummaryText;
     globalScope.getHltvActionLabel = getHltvActionLabel;
     globalScope.normalizeHltvRecentMatchesState = normalizeHltvRecentMatchesState;
     globalScope.normalizeHltvPageStatus = normalizeHltvPageStatus;

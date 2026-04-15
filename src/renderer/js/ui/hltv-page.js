@@ -252,6 +252,16 @@
     }
   }
 
+  function renderHltvCacheStatus() {
+    if (!hltvCacheStatusElement) {
+      return;
+    }
+
+    const cacheText = formatHltvCacheSummaryText(hltvDiscoveryState.cacheSummary || {});
+    hltvCacheStatusElement.innerText = cacheText;
+    hltvCacheStatusElement.classList.toggle('is-hidden', !cacheText);
+  }
+
   function setHltvStatus(status, detail = '') {
     hltvPageStatus = normalizeHltvPageStatus(status);
     hltvPageStatusDetail = normalizeText(detail);
@@ -717,6 +727,7 @@
 
   function renderHltvDiscoveryWorkspace() {
     renderHltvStatus();
+    renderHltvCacheStatus();
     renderHltvDiscoverySummary();
     renderHltvResults();
     renderHltvQueue();
