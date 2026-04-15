@@ -35,6 +35,15 @@ const {
   upsertAnalysisQueueItem: upsertAnalysisQueueItemInternal,
   upsertInspirationCard: upsertInspirationCardInternal,
 } = require('./discovery');
+const {
+  getHltvCacheSummary: getHltvCacheSummaryInternal,
+  searchHltvCachedMatches: searchHltvCachedMatchesInternal,
+  searchHltvCachedPlayers: searchHltvCachedPlayersInternal,
+  searchHltvCachedTeams: searchHltvCachedTeamsInternal,
+  updateHltvCachedDemoDownload: updateHltvCachedDemoDownloadInternal,
+  updateHltvCachedMapParsedDemo: updateHltvCachedMapParsedDemoInternal,
+  upsertHltvCacheMatches: upsertHltvCacheMatchesInternal,
+} = require('./hltv-cache');
 
 const projectRoot = path.resolve(__dirname, '../../..');
 const dataDirectoryPath = path.join(projectRoot, 'data');
@@ -2163,6 +2172,54 @@ async function listParsedDemoEntityInputs() {
   });
 }
 
+async function upsertHltvCacheMatches(payload = {}) {
+  return upsertHltvCacheMatchesInternal({
+    getDatabase,
+    getOne,
+    getAll,
+  }, payload);
+}
+
+async function searchHltvCachedMatches(filters = {}) {
+  return searchHltvCachedMatchesInternal({
+    getDatabase,
+    getAll,
+  }, filters);
+}
+
+async function searchHltvCachedTeams(filters = {}) {
+  return searchHltvCachedTeamsInternal({
+    getDatabase,
+    getAll,
+  }, filters);
+}
+
+async function searchHltvCachedPlayers(filters = {}) {
+  return searchHltvCachedPlayersInternal({
+    getDatabase,
+    getAll,
+  }, filters);
+}
+
+async function getHltvCacheSummary() {
+  return getHltvCacheSummaryInternal({
+    getDatabase,
+    getOne,
+  });
+}
+
+async function updateHltvCachedDemoDownload(payload = {}) {
+  return updateHltvCachedDemoDownloadInternal({
+    getDatabase,
+  }, payload);
+}
+
+async function updateHltvCachedMapParsedDemo(payload = {}) {
+  return updateHltvCachedMapParsedDemoInternal({
+    getDatabase,
+  }, payload);
+}
+
 module.exports = {
   computeDemoChecksum,
   getDemoByChecksum,
@@ -2204,5 +2261,12 @@ module.exports = {
   getInspirationCard,
   upsertInspirationCard,
   deleteInspirationCard,
+  upsertHltvCacheMatches,
+  searchHltvCachedMatches,
+  searchHltvCachedTeams,
+  searchHltvCachedPlayers,
+  getHltvCacheSummary,
+  updateHltvCachedDemoDownload,
+  updateHltvCachedMapParsedDemo,
   databaseFilePath,
 };
