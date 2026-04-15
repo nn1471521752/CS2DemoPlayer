@@ -97,6 +97,9 @@ const {
   createHltvCacheService,
 } = require('./hltv-cache-service');
 const {
+  createHltvLocalLibraryService,
+} = require('./hltv-local-library-service');
+const {
   isSupportedDemoPath,
 } = require('./demo-path-utils');
 
@@ -117,6 +120,12 @@ const hltvCacheService = createHltvCacheService({
   upsertHltvCacheMatches,
   updateHltvCachedDemoDownload,
   updateHltvCachedMapParsedDemo,
+});
+const hltvLocalLibraryService = createHltvLocalLibraryService({
+  getHltvCacheSummary,
+  searchHltvCachedMatches,
+  searchHltvCachedTeams,
+  searchHltvCachedPlayers,
 });
 const hltvDiscoveryService = createHltvDiscoveryService({
   getRecentMatchesState: async () => hltvRuntime.getRecentMatchesState(),
@@ -1961,6 +1970,22 @@ async function handleHltvDownloadDemo(_event, payload = {}) {
   return response;
 }
 
+async function handleHltvLibraryGetState(_event, payload = {}) {
+  return hltvLocalLibraryService.getLibraryState(payload);
+}
+
+async function handleHltvLibrarySearchMatches(_event, payload = {}) {
+  return hltvLocalLibraryService.searchMatches(payload);
+}
+
+async function handleHltvLibrarySearchTeams(_event, payload = {}) {
+  return hltvLocalLibraryService.searchTeams(payload);
+}
+
+async function handleHltvLibrarySearchPlayers(_event, payload = {}) {
+  return hltvLocalLibraryService.searchPlayers(payload);
+}
+
 async function handleEntitiesGetPageState() {
   return entitiesService.getEntitiesPageState();
 }
@@ -1991,6 +2016,10 @@ ipcMain.handle('hltv-remove-queued-match', handleHltvRemoveQueuedMatch);
 ipcMain.handle('hltv-save-inspiration-card', handleHltvSaveInspirationCard);
 ipcMain.handle('hltv-delete-inspiration-card', handleHltvDeleteInspirationCard);
 ipcMain.handle('hltv-download-demo', handleHltvDownloadDemo);
+ipcMain.handle('hltv-library-get-state', handleHltvLibraryGetState);
+ipcMain.handle('hltv-library-search-matches', handleHltvLibrarySearchMatches);
+ipcMain.handle('hltv-library-search-teams', handleHltvLibrarySearchTeams);
+ipcMain.handle('hltv-library-search-players', handleHltvLibrarySearchPlayers);
 ipcMain.handle('entities-get-page-state', handleEntitiesGetPageState);
 ipcMain.handle('entities-approve-candidates', handleEntitiesApproveCandidates);
 ipcMain.handle('entities-ignore-candidates', handleEntitiesIgnoreCandidates);
