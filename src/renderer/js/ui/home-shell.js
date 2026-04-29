@@ -3,23 +3,23 @@
     return [
       {
         id: HOME_SECTION_IDS.demoLibrary,
-        label: 'Demo \u5e93',
-        shortLabel: 'DB',
-      },
-      {
-        id: HOME_SECTION_IDS.localLibrary,
-        label: '本地资料库',
-        shortLabel: 'HLDB',
-      },
-      {
-        id: HOME_SECTION_IDS.entities,
-        label: 'Entities',
-        shortLabel: 'EN',
+        label: 'Demo',
+        shortLabel: 'DM',
       },
       {
         id: HOME_SECTION_IDS.hltv,
         label: 'HLTV',
         shortLabel: 'HL',
+      },
+      {
+        id: HOME_SECTION_IDS.localLibrary,
+        label: 'Library',
+        shortLabel: 'LB',
+      },
+      {
+        id: HOME_SECTION_IDS.playbook,
+        label: 'Playbook',
+        shortLabel: 'PB',
       },
     ];
   }
@@ -63,7 +63,7 @@
     return {
       [HOME_SECTION_IDS.demoLibrary]: demoLibraryPage,
       [HOME_SECTION_IDS.localLibrary]: hltvLocalLibraryPage,
-      [HOME_SECTION_IDS.entities]: entitiesPage,
+      [HOME_SECTION_IDS.playbook]: playbookPage,
       [HOME_SECTION_IDS.hltv]: hltvPage,
     };
   }
@@ -90,10 +90,10 @@
     }
 
     if (
-      currentHomeSectionId === HOME_SECTION_IDS.entities
-      && typeof loadEntitiesPageState === 'function'
+      currentHomeSectionId === HOME_SECTION_IDS.playbook
+      && typeof loadPlaybookState === 'function'
     ) {
-      void loadEntitiesPageState();
+      void loadPlaybookState();
     }
   }
 

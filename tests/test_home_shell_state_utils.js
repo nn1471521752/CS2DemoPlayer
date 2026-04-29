@@ -19,9 +19,21 @@ assert.strictEqual(
 );
 
 assert.strictEqual(
-  normalizeHomeSectionId(HOME_SECTION_IDS.entities),
   HOME_SECTION_IDS.entities,
-  'should keep the entities home section id',
+  undefined,
+  'should not expose the retired entities home section id',
+);
+
+assert.strictEqual(
+  HOME_SECTION_IDS.playbook,
+  'playbook',
+  'should expose the Playbook home section id',
+);
+
+assert.strictEqual(
+  normalizeHomeSectionId(HOME_SECTION_IDS.playbook),
+  HOME_SECTION_IDS.playbook,
+  'should keep the Playbook home section id',
 );
 
 assert.strictEqual(

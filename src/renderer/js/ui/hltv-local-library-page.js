@@ -19,8 +19,6 @@
       hasDemoOnly: false,
       downloadedOnly: false,
       parsedOnly: false,
-      queuedOnly: false,
-      cardsOnly: false,
     },
     teams: {
       query: '',
@@ -54,7 +52,7 @@
     localLibrarySummaryElement.innerHTML = buildLocalLibrarySummaryCards(localLibraryState.summary).map((card) => `
       <div class="summary-card">
         <span class="summary-card-label">${escapeHtml(card.label)}</span>
-        <span class="summary-card-value">${escapeHtml(card.value)}</span>
+        <span class="summary-card-value${card.isMeta ? ' is-meta' : ''}">${escapeHtml(card.value)}</span>
       </div>
     `).join('');
   }
@@ -72,7 +70,7 @@
 
     localLibraryTabListElement.innerHTML = tabIds.map((tabId) => `
       <button
-        class="entities-tab${tabId === localLibraryActiveTabId ? ' is-active' : ''}"
+        class="entities-tab${tabId === localLibraryActiveTabId ? ' active' : ''}"
         type="button"
         data-local-library-tab="${escapeHtml(tabId)}"
       >
@@ -102,11 +100,22 @@
         <div class="hltv-results-row-main">
           <div class="hltv-results-versus">
             <div class="hltv-results-team is-left">${escapeHtml(match.team1Name || 'Unknown')}</div>
-            <div class="hltv-results-score">${escapeHtml(match.eventName || '')}</div>
+            <div class="hltv-results-score">${escapeHtml(`Match ${viewModel.matchId}`)}</div>
             <div class="hltv-results-team is-right">${escapeHtml(match.team2Name || 'Unknown')}</div>
           </div>
-          <div class="hltv-results-meta">${escapeHtml(`Match ${viewModel.matchId}`)}</div>
-          <div class="local-library-cache-badge">${escapeHtml(viewModel.cacheBadgeText)}</div>
+          <div class="local-library-row-badges">
+            <div class="local-library-cache-badge">${escapeHtml(viewModel.cacheBadgeText)}</div>
+            ${viewModel.gameLibraryBadgeText ? `<div class="local-library-game-badge" title="${escapeHtml(viewModel.addedToGameLibraryAt)}">${escapeHtml(viewModel.gameLibraryBadgeText)}</div>` : ''}
+          </div>
+        </div>
+        <div class="hltv-results-meta">${escapeHtml(match.eventName || 'Unknown event')}</div>
+        <div class="hltv-results-row-actions">
+          <button
+            class="local-library-row-action"
+            type="button"
+            data-local-library-add-match="${escapeHtml(viewModel.matchId)}"
+            ${viewModel.canAddToGameLibrary ? '' : 'disabled'}
+          >${escapeHtml(viewModel.addToGameLibraryButtonText)}</button>
         </div>
       `;
 
@@ -146,8 +155,13 @@
       const row = document.createElement('div');
       row.className = 'local-library-entity-row';
       row.innerHTML = `
-        <div class="local-library-entity-title">${escapeHtml(team.displayName || team.teamId)}</div>
-        <div class="local-library-entity-meta">${escapeHtml(team.teamUrl || team.teamId || '')}</div>
+        <div class="local-library-entity-row-main">
+          ${team.logoPath ? `<img class="local-library-team-logo" src="${escapeHtml(toLocalLibraryLogoImageSrc(team.logoPath))}" alt="${escapeHtml(team.displayName || team.teamId)}">` : '<div class="local-library-team-logo local-library-team-logo-placeholder"></div>'}
+          <div>
+            <div class="local-library-entity-title">${escapeHtml(team.displayName || team.teamId)}</div>
+            <div class="local-library-entity-meta">${escapeHtml(team.teamUrl || team.teamId || '')}</div>
+          </div>
+        </div>
       `;
       localLibraryTeamListElement.appendChild(row);
     });
@@ -253,6 +267,48 @@
     renderLocalLibraryPlayers();
   }
 
+  async function clearLocalLibraryCache() {
+    const confirmMessage = '确定要清除全部本地 HLTV 缓存吗？此操作不会删除本地 demo 文件。';
+    if (typeof globalScope.confirm === 'function' && !globalScope.confirm(confirmMessage)) {
+      return;
+    }
+
+    try {
+      setLocalLibraryStatus('正在清除全部 HLTV 缓存...');
+      await ipcRenderer.invoke('hltv-cache-clear-all', {});
+      await loadHltvLocalLibraryState();
+      setLocalLibraryStatus('已清除全部 HLTV 缓存。', true);
+    } catch (error) {
+      setLocalLibraryStatus(error.message || '清除 HLTV 缓存失败。', true);
+    }
+  }
+
+  async function addCachedMatchToGameLibrary(matchId) {
+    const normalizedMatchId = String(matchId || '').trim();
+    if (!normalizedMatchId) {
+      return;
+    }
+
+    try {
+      setLocalLibraryStatus('正在加入本地游戏库...');
+      const response = await ipcRenderer.invoke('hltv-cache-add-to-game-library', {
+        matchId: normalizedMatchId,
+      });
+      if (response?.ok === false) {
+        const reason = String(response.reason || '').trim();
+        const message = reason === 'not_found'
+          ? '加入本地游戏库失败：本地缓存中找不到该比赛。'
+          : '加入本地游戏库失败。';
+        setLocalLibraryStatus(message, true);
+        return;
+      }
+      await refreshLocalLibraryMatches();
+      setLocalLibraryStatus('已加入本地游戏库。', true);
+    } catch (error) {
+      setLocalLibraryStatus(error.message || '加入本地游戏库失败。', true);
+    }
+  }
+
   function bindLocalLibraryEvents() {
     if (localLibraryTabListElement) {
       localLibraryTabListElement.addEventListener('click', (event) => {
@@ -275,11 +331,31 @@
       });
     }
 
+    if (btnLocalLibraryClearAll) {
+      btnLocalLibraryClearAll.addEventListener('click', () => {
+        void clearLocalLibraryCache();
+      });
+    }
+
     if (btnLocalLibraryOpenHltv) {
       btnLocalLibraryOpenHltv.addEventListener('click', () => {
         if (typeof showHomeSection === 'function') {
           showHomeSection(HOME_SECTION_IDS.hltv);
         }
+      });
+    }
+
+    if (localLibraryMatchListElement) {
+      localLibraryMatchListElement.addEventListener('click', (event) => {
+        const target = event.target;
+        if (!(target instanceof Element)) {
+          return;
+        }
+        const button = target.closest('[data-local-library-add-match]');
+        if (!button || button.hasAttribute('disabled')) {
+          return;
+        }
+        void addCachedMatchToGameLibrary(button.getAttribute('data-local-library-add-match'));
       });
     }
 
@@ -301,8 +377,6 @@
       ['hasDemoOnly', localLibraryFilterDemoOnlyInput],
       ['downloadedOnly', localLibraryFilterDownloadedOnlyInput],
       ['parsedOnly', localLibraryFilterParsedOnlyInput],
-      ['queuedOnly', localLibraryFilterQueuedOnlyInput],
-      ['cardsOnly', localLibraryFilterCardsOnlyInput],
     ].forEach(([key, inputElement]) => {
       if (!inputElement) {
         return;
@@ -332,6 +406,8 @@
   renderLocalLibraryPage();
 
   const exportsObject = {
+    addCachedMatchToGameLibrary,
+    clearLocalLibraryCache,
     loadHltvLocalLibraryState,
     renderLocalLibraryPage,
   };
@@ -341,6 +417,8 @@
   }
 
   if (globalScope && typeof globalScope === 'object') {
+    globalScope.addCachedMatchToGameLibrary = addCachedMatchToGameLibrary;
+    globalScope.clearLocalLibraryCache = clearLocalLibraryCache;
     globalScope.loadHltvLocalLibraryState = loadHltvLocalLibraryState;
     globalScope.renderLocalLibraryPage = renderLocalLibraryPage;
   }

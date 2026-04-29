@@ -27,16 +27,9 @@ const {
   upsertTeamCandidate: upsertTeamCandidateInternal,
 } = require('./entities');
 const {
-  deleteAnalysisQueueItem: deleteAnalysisQueueItemInternal,
-  deleteInspirationCard: deleteInspirationCardInternal,
-  getInspirationCard: getInspirationCardInternal,
-  listAnalysisQueueItems: listAnalysisQueueItemsInternal,
-  listInspirationCards: listInspirationCardsInternal,
-  upsertAnalysisQueueItem: upsertAnalysisQueueItemInternal,
-  upsertInspirationCard: upsertInspirationCardInternal,
-} = require('./discovery');
-const {
+  clearHltvCache: clearHltvCacheInternal,
   getHltvCacheSummary: getHltvCacheSummaryInternal,
+  markHltvMatchAddedToGameLibrary: markHltvMatchAddedToGameLibraryInternal,
   searchHltvCachedMatches: searchHltvCachedMatchesInternal,
   searchHltvCachedPlayers: searchHltvCachedPlayersInternal,
   searchHltvCachedTeams: searchHltvCachedTeamsInternal,
@@ -44,11 +37,33 @@ const {
   updateHltvCachedMapParsedDemo: updateHltvCachedMapParsedDemoInternal,
   upsertHltvCacheMatches: upsertHltvCacheMatchesInternal,
 } = require('./hltv-cache');
+const {
+  getPlaybookSummary: getPlaybookSummaryInternal,
+  getPlaybookGrenadeById: getPlaybookGrenadeByIdInternal,
+  importPlaybookGrenades: importPlaybookGrenadesInternal,
+  listPlaybookGrenades: listPlaybookGrenadesInternal,
+  listPlaybookMaps: listPlaybookMapsInternal,
+  syncPlaybookMaps: syncPlaybookMapsInternal,
+  updatePlaybookGrenade: updatePlaybookGrenadeInternal,
+} = require('./playbook');
+const {
+  buildPlaybookMapEntries,
+} = require('../playbook-map-utils');
+const {
+  scanPlaybookMarkdownRoot,
+  updateGrenadeMarkdownFile,
+  writeGrenadeDrafts,
+} = require('../playbook-markdown-repository');
+const {
+  CS2_MAP_META,
+} = require('../../renderer/js/map-meta');
 
 const projectRoot = path.resolve(__dirname, '../../..');
 const dataDirectoryPath = path.join(projectRoot, 'data');
 const databaseFilePath = path.join(dataDirectoryPath, 'cs2-demo-player.sqlite');
 const databaseBackupFilePath = path.join(dataDirectoryPath, 'cs2-demo-player.sqlite.bak');
+const rendererMapAssetsDirectoryPath = path.join(projectRoot, 'src', 'renderer', 'assets', 'maps');
+const defaultPlaybookRootPath = process.env.CS2_PLAYBOOK_ROOT || 'E:\\obsidian\\20-Playbook';
 
 let sqlModulePromise = null;
 let databasePromise = null;
@@ -2120,51 +2135,6 @@ async function listApprovedPlayers() {
   });
 }
 
-async function listAnalysisQueueItems() {
-  return listAnalysisQueueItemsInternal({
-    getDatabase,
-    getAll,
-  });
-}
-
-async function upsertAnalysisQueueItem(item = {}) {
-  return upsertAnalysisQueueItemInternal({
-    getDatabase,
-  }, item);
-}
-
-async function deleteAnalysisQueueItem(matchId) {
-  return deleteAnalysisQueueItemInternal({
-    getDatabase,
-  }, matchId);
-}
-
-async function listInspirationCards() {
-  return listInspirationCardsInternal({
-    getDatabase,
-    getAll,
-  });
-}
-
-async function getInspirationCard(matchId) {
-  return getInspirationCardInternal({
-    getDatabase,
-    getOne,
-  }, matchId);
-}
-
-async function upsertInspirationCard(card = {}) {
-  return upsertInspirationCardInternal({
-    getDatabase,
-  }, card);
-}
-
-async function deleteInspirationCard(matchId) {
-  return deleteInspirationCardInternal({
-    getDatabase,
-  }, matchId);
-}
-
 async function listParsedDemoEntityInputs() {
   return listParsedDemoEntityInputsInternal({
     getDatabase,
@@ -2177,6 +2147,7 @@ async function upsertHltvCacheMatches(payload = {}) {
     getDatabase,
     getOne,
     getAll,
+    persistDatabase,
   }, payload);
 }
 
@@ -2211,13 +2182,117 @@ async function getHltvCacheSummary() {
 async function updateHltvCachedDemoDownload(payload = {}) {
   return updateHltvCachedDemoDownloadInternal({
     getDatabase,
+    persistDatabase,
   }, payload);
 }
 
 async function updateHltvCachedMapParsedDemo(payload = {}) {
   return updateHltvCachedMapParsedDemoInternal({
     getDatabase,
+    persistDatabase,
   }, payload);
+}
+
+async function markHltvMatchAddedToGameLibrary(payload = {}) {
+  return markHltvMatchAddedToGameLibraryInternal({
+    getDatabase,
+    persistDatabase,
+  }, payload);
+}
+
+async function clearHltvCache() {
+  return clearHltvCacheInternal({
+    getDatabase,
+    persistDatabase,
+  });
+}
+
+async function syncPlaybookMapsFromStaticMeta() {
+  const entries = buildPlaybookMapEntries(CS2_MAP_META, {
+    hasRadarImage: (mapId) => fs.existsSync(path.join(rendererMapAssetsDirectoryPath, `${mapId}.png`)),
+  });
+
+  return syncPlaybookMapsInternal({
+    getDatabase,
+    getOne,
+    persistDatabase,
+  }, entries);
+}
+
+async function listPlaybookMaps() {
+  return listPlaybookMapsInternal({
+    getDatabase,
+    getAll,
+  });
+}
+
+async function importPlaybookGrenades(entries = []) {
+  return importPlaybookGrenadesInternal({
+    getDatabase,
+    getOne,
+    persistDatabase,
+  }, entries);
+}
+
+async function scanPlaybookMarkdown() {
+  return scanPlaybookMarkdownRoot(defaultPlaybookRootPath);
+}
+
+async function writePlaybookGrenadeDrafts(entries = []) {
+  return writeGrenadeDrafts(defaultPlaybookRootPath, entries);
+}
+
+async function listPlaybookGrenades() {
+  return listPlaybookGrenadesInternal({
+    getDatabase,
+    getAll,
+  });
+}
+
+async function getPlaybookGrenadeById(grenadeId) {
+  return getPlaybookGrenadeByIdInternal({
+    getDatabase,
+    getOne,
+  }, grenadeId);
+}
+
+async function updatePlaybookGrenadeMarkdown(payload = {}) {
+  const existing = await getPlaybookGrenadeById(payload.grenadeId);
+  if (!existing || existing.syncMode !== 'obsidian-canonical' || !existing.markdownPath) {
+    return null;
+  }
+
+  const markdownUpdate = await updateGrenadeMarkdownFile(existing.markdownPath, payload, {
+    expectedContentHash: existing.contentHash,
+  });
+  if (markdownUpdate?.status !== 'success' || !markdownUpdate.grenade) {
+    return markdownUpdate;
+  }
+
+  const reindex = await importPlaybookGrenadesInternal({
+    getDatabase,
+    getOne,
+    persistDatabase,
+  }, [markdownUpdate.grenade]);
+
+  return Array.isArray(reindex?.grenades) && reindex.grenades.length > 0
+    ? reindex.grenades[0]
+    : markdownUpdate.grenade;
+}
+
+async function updatePlaybookGrenade(payload = {}) {
+  return updatePlaybookGrenadeInternal({
+    getDatabase,
+    getOne,
+    persistDatabase,
+  }, payload);
+}
+
+async function getPlaybookSummary() {
+  return getPlaybookSummaryInternal({
+    getDatabase,
+    getOne,
+  });
 }
 
 module.exports = {
@@ -2254,19 +2329,24 @@ module.exports = {
   ignorePlayerCandidates,
   listApprovedTeams,
   listApprovedPlayers,
-  listAnalysisQueueItems,
-  upsertAnalysisQueueItem,
-  deleteAnalysisQueueItem,
-  listInspirationCards,
-  getInspirationCard,
-  upsertInspirationCard,
-  deleteInspirationCard,
   upsertHltvCacheMatches,
   searchHltvCachedMatches,
   searchHltvCachedTeams,
   searchHltvCachedPlayers,
   getHltvCacheSummary,
+  clearHltvCache,
+  markHltvMatchAddedToGameLibrary,
   updateHltvCachedDemoDownload,
   updateHltvCachedMapParsedDemo,
+  syncPlaybookMapsFromStaticMeta,
+  importPlaybookGrenades,
+  scanPlaybookMarkdown,
+  writePlaybookGrenadeDrafts,
+  listPlaybookGrenades,
+  getPlaybookGrenadeById,
+  listPlaybookMaps,
+  updatePlaybookGrenadeMarkdown,
+  updatePlaybookGrenade,
+  getPlaybookSummary,
   databaseFilePath,
 };

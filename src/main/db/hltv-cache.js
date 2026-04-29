@@ -7,6 +7,12 @@ const {
   normalizeText,
 } = require('../hltv-cache-utils');
 
+async function persistHltvCacheIfAvailable(context, database) {
+  if (typeof context?.persistDatabase === 'function') {
+    await context.persistDatabase(database);
+  }
+}
+
 function mapHltvMapRow(row = {}) {
   return {
     matchId: normalizeText(row.match_id),
@@ -29,8 +35,12 @@ function mapHltvMatchRow(row = {}) {
     matchUrl: normalizeText(row.match_url),
     team1Id: normalizeText(row.team1_id),
     team1Name: normalizeText(row.team1_name),
+    team1LogoPath: normalizeText(row.team1_logo_path),
+    team1LogoUrl: normalizeText(row.team1_logo_url),
     team2Id: normalizeText(row.team2_id),
     team2Name: normalizeText(row.team2_name),
+    team2LogoPath: normalizeText(row.team2_logo_path),
+    team2LogoUrl: normalizeText(row.team2_logo_url),
     team1Score: row.team1_score === null || row.team1_score === undefined ? null : Number(row.team1_score),
     team2Score: row.team2_score === null || row.team2_score === undefined ? null : Number(row.team2_score),
     eventId: normalizeText(row.event_id),
@@ -38,9 +48,11 @@ function mapHltvMatchRow(row = {}) {
     matchFormat: normalizeText(row.match_format),
     matchTimeLabel: normalizeText(row.match_time_label),
     matchTimestampMs: row.match_timestamp_ms === null || row.match_timestamp_ms === undefined ? null : Number(row.match_timestamp_ms),
+    hltvStarRating: Number(row.hltv_star_rating) || 0,
     hasDemo: Number(row.has_demo) === 1,
     downloadedDemoPath: normalizeText(row.downloaded_demo_path),
     downloadedFileSize: Number(row.downloaded_file_size) || 0,
+    addedToGameLibraryAt: normalizeText(row.added_to_game_library_at),
     playableDemoPaths: (() => {
       try {
         const parsedValue = JSON.parse(String(row.playable_demo_paths_json || '[]'));
@@ -106,6 +118,62 @@ function getExistingById(context, tableName, idColumn, idValue) {
     context.database,
     `SELECT * FROM ${tableName} WHERE ${idColumn} = ? LIMIT 1`,
     [normalizeText(idValue)],
+  );
+}
+
+function parseJsonArray(value) {
+  try {
+    const parsedValue = JSON.parse(String(value || '[]'));
+    return Array.isArray(parsedValue) ? parsedValue.map((item) => normalizeText(item)).filter(Boolean) : [];
+  } catch (_error) {
+    return [];
+  }
+}
+
+function findPlayableDemoMapIndex(paths = [], localDemoPath = '') {
+  const normalizedLocalPath = normalizeText(localDemoPath);
+  const foundIndex = paths.findIndex((path) => normalizeText(path) === normalizedLocalPath);
+  return foundIndex >= 0 ? foundIndex + 1 : 0;
+}
+
+function getNextMapIndex(context, database, matchId) {
+  const row = context.getOne(
+    database,
+    'SELECT COALESCE(MAX(map_index), 0) + 1 AS next_map_index FROM hltv_match_maps WHERE match_id = ?',
+    [matchId],
+  );
+  return Number(row?.next_map_index) || 1;
+}
+
+function upsertHltvLocalDemoMap(database, map, cachedAt) {
+  database.run(
+    `
+      INSERT INTO hltv_match_maps (
+        match_id,
+        map_index,
+        map_name,
+        map_slug,
+        local_demo_path,
+        parsed_demo_checksum,
+        cache_updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(match_id, map_index) DO UPDATE SET
+        map_name = COALESCE(NULLIF(excluded.map_name, ''), hltv_match_maps.map_name),
+        map_slug = COALESCE(NULLIF(excluded.map_slug, ''), hltv_match_maps.map_slug),
+        local_demo_path = COALESCE(NULLIF(excluded.local_demo_path, ''), hltv_match_maps.local_demo_path),
+        parsed_demo_checksum = COALESCE(NULLIF(excluded.parsed_demo_checksum, ''), hltv_match_maps.parsed_demo_checksum),
+        cache_updated_at = excluded.cache_updated_at
+    `,
+    [
+      map.matchId,
+      map.mapIndex,
+      map.mapName,
+      map.mapSlug,
+      map.localDemoPath,
+      map.parsedDemoChecksum,
+      cachedAt,
+    ],
   );
 }
 
@@ -260,11 +328,13 @@ async function upsertHltvCacheMatches(context, payload = {}) {
         teamId: match.team1Id || resolveFallbackTeamId({ displayName: match.team1Name }),
         displayName: match.team1Name,
         normalizedName: normalizeText(match.team1Name).toLowerCase(),
+        logoUrl: match.team1LogoUrl,
       },
       {
         teamId: match.team2Id || resolveFallbackTeamId({ displayName: match.team2Name }),
         displayName: match.team2Name,
         normalizedName: normalizeText(match.team2Name).toLowerCase(),
+        logoUrl: match.team2LogoUrl,
       },
     ].filter((team) => team.teamId && team.displayName && !explicitTeamIds.has(team.teamId));
 
@@ -276,15 +346,17 @@ async function upsertHltvCacheMatches(context, payload = {}) {
             team_id,
             display_name,
             normalized_name,
+            logo_url,
             related_match_count,
             first_seen_at,
             last_seen_at,
             cache_updated_at
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(team_id) DO UPDATE SET
             display_name = excluded.display_name,
             normalized_name = excluded.normalized_name,
+            logo_url = COALESCE(NULLIF(excluded.logo_url, ''), hltv_teams.logo_url),
             related_match_count = hltv_teams.related_match_count + 1,
             last_seen_at = excluded.last_seen_at,
             cache_updated_at = excluded.cache_updated_at
@@ -293,6 +365,7 @@ async function upsertHltvCacheMatches(context, payload = {}) {
           team.teamId,
           team.displayName,
           team.normalizedName,
+          normalizeText(team.logoUrl),
           1,
           normalizeText(existingRow?.first_seen_at) || cachedAt,
           cachedAt,
@@ -324,16 +397,18 @@ async function upsertHltvCacheMatches(context, payload = {}) {
           match_format,
           match_time_label,
           match_timestamp_ms,
+          hltv_star_rating,
           has_demo,
           downloaded_demo_path,
           downloaded_file_size,
           playable_demo_paths_json,
+          added_to_game_library_at,
           source,
           first_seen_at,
           last_seen_at,
           cache_updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(match_id) DO UPDATE SET
           match_url = excluded.match_url,
           team1_id = excluded.team1_id,
@@ -347,10 +422,12 @@ async function upsertHltvCacheMatches(context, payload = {}) {
           match_format = excluded.match_format,
           match_time_label = excluded.match_time_label,
           match_timestamp_ms = excluded.match_timestamp_ms,
+          hltv_star_rating = excluded.hltv_star_rating,
           has_demo = excluded.has_demo,
           downloaded_demo_path = excluded.downloaded_demo_path,
           downloaded_file_size = excluded.downloaded_file_size,
           playable_demo_paths_json = excluded.playable_demo_paths_json,
+          added_to_game_library_at = COALESCE(NULLIF(hltv_matches.added_to_game_library_at, ''), excluded.added_to_game_library_at),
           source = excluded.source,
           last_seen_at = excluded.last_seen_at,
           cache_updated_at = excluded.cache_updated_at
@@ -369,10 +446,12 @@ async function upsertHltvCacheMatches(context, payload = {}) {
         match.matchFormat,
         match.matchTimeLabel,
         match.matchTimestampMs,
+        match.hltvStarRating,
         match.hasDemo ? 1 : 0,
         match.downloadedDemoPath,
         match.downloadedFileSize,
         JSON.stringify(match.playableDemoPaths || []),
+        normalizeText(existingMatch?.added_to_game_library_at),
         match.source,
         normalizeText(existingMatch?.first_seen_at) || cachedAt,
         cachedAt,
@@ -451,6 +530,7 @@ async function upsertHltvCacheMatches(context, payload = {}) {
     }
   });
 
+  await persistHltvCacheIfAvailable(context, database);
   delete context.database;
   return stats;
 }
@@ -530,35 +610,23 @@ async function searchHltvCachedMatches(context, filters = {}) {
     `);
   }
 
-  if (normalizedFilters.queuedOnly) {
-    clauses.push(`
-      EXISTS (
-        SELECT 1
-        FROM hltv_analysis_queue queue_filter
-        WHERE queue_filter.match_id = hltv_matches.match_id
-      )
-    `);
-  }
-
-  if (normalizedFilters.cardsOnly) {
-    clauses.push(`
-      EXISTS (
-        SELECT 1
-        FROM hltv_inspiration_cards card_filter
-        WHERE card_filter.match_id = hltv_matches.match_id
-      )
-    `);
-  }
 
   params.push(normalizedFilters.limit, normalizedFilters.offset);
 
   const rows = context.getAll(
     database,
     `
-      SELECT *
+      SELECT
+        hltv_matches.*,
+        team1_logo.logo_path AS team1_logo_path,
+        team1_logo.logo_url AS team1_logo_url,
+        team2_logo.logo_path AS team2_logo_path,
+        team2_logo.logo_url AS team2_logo_url
       FROM hltv_matches
+      LEFT JOIN hltv_teams team1_logo ON team1_logo.team_id = hltv_matches.team1_id
+      LEFT JOIN hltv_teams team2_logo ON team2_logo.team_id = hltv_matches.team2_id
       ${clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : ''}
-      ORDER BY cache_updated_at DESC, match_id DESC
+      ORDER BY hltv_matches.cache_updated_at DESC, hltv_matches.match_id DESC
       LIMIT ?
       OFFSET ?
     `,
@@ -659,11 +727,22 @@ async function updateHltvCachedDemoDownload(context, payload = {}) {
     ? payload.playableDemoPaths.map((value) => normalizeText(value)).filter(Boolean)
     : [];
 
+  const existingMatch = matchId
+    ? context.getOne(database, 'SELECT * FROM hltv_matches WHERE match_id = ? LIMIT 1', [matchId])
+    : null;
+  if (!existingMatch) {
+    return { ok: false, reason: matchId ? 'not_found' : 'missing_match_id' };
+  }
+
   database.run(
     `
       UPDATE hltv_matches
       SET downloaded_demo_path = ?,
           downloaded_file_size = ?,
+          has_demo = CASE
+            WHEN ? > 0 OR TRIM(?) <> '' THEN 1
+            ELSE has_demo
+          END,
           playable_demo_paths_json = ?,
           cache_updated_at = ?
       WHERE match_id = ?
@@ -671,6 +750,8 @@ async function updateHltvCachedDemoDownload(context, payload = {}) {
     [
       downloadedDemoPath,
       downloadedFileSize,
+      playableDemoPaths.length,
+      downloadedDemoPath,
       JSON.stringify(playableDemoPaths),
       cachedAt,
       matchId,
@@ -678,18 +759,18 @@ async function updateHltvCachedDemoDownload(context, payload = {}) {
   );
 
   playableDemoPaths.forEach((localDemoPath, index) => {
-    database.run(
-      `
-        UPDATE hltv_match_maps
-        SET local_demo_path = ?,
-            cache_updated_at = ?
-        WHERE match_id = ?
-          AND map_index = ?
-      `,
-      [localDemoPath, cachedAt, matchId, index + 1],
+    upsertHltvLocalDemoMap(
+      database,
+      normalizeHltvCacheMap({
+        matchId,
+        mapIndex: index + 1,
+        localDemoPath,
+      }),
+      cachedAt,
     );
   });
 
+  await persistHltvCacheIfAvailable(context, database);
   return { ok: true };
 }
 
@@ -699,23 +780,85 @@ async function updateHltvCachedMapParsedDemo(context, payload = {}) {
   const matchId = normalizeText(payload.matchId);
   const localDemoPath = normalizeText(payload.localDemoPath);
   const parsedDemoChecksum = normalizeText(payload.parsedDemoChecksum);
+  const existingMatch = matchId
+    ? context.getOne(database, 'SELECT * FROM hltv_matches WHERE match_id = ? LIMIT 1', [matchId])
+    : null;
+  if (!existingMatch) {
+    return { ok: false, reason: matchId ? 'not_found' : 'missing_match_id' };
+  }
+
+  const existingMap = context.getOne(
+    database,
+    `
+      SELECT *
+      FROM hltv_match_maps
+      WHERE match_id = ?
+        AND local_demo_path = ?
+      LIMIT 1
+    `,
+    [matchId, localDemoPath],
+  );
+
+  const playableDemoPaths = parseJsonArray(existingMatch.playable_demo_paths_json);
+  const fallbackMapIndex = findPlayableDemoMapIndex(playableDemoPaths, localDemoPath)
+    || getNextMapIndex(context, database, matchId);
+
+  upsertHltvLocalDemoMap(
+    database,
+    normalizeHltvCacheMap({
+      matchId,
+      mapIndex: Number(existingMap?.map_index) || fallbackMapIndex,
+      mapName: existingMap?.map_name,
+      mapSlug: existingMap?.map_slug,
+      localDemoPath,
+      parsedDemoChecksum,
+    }),
+    cachedAt,
+  );
+
+  await persistHltvCacheIfAvailable(context, database);
+  return { ok: true };
+}
+
+async function markHltvMatchAddedToGameLibrary(context, payload = {}) {
+  const database = await context.getDatabase();
+  const matchId = normalizeText(payload.matchId);
+  const addedAt = normalizeText(payload.addedAt) || new Date().toISOString();
+  const existingMatch = matchId
+    ? context.getOne(database, 'SELECT * FROM hltv_matches WHERE match_id = ? LIMIT 1', [matchId])
+    : null;
+  if (!existingMatch) {
+    return { ok: false, reason: matchId ? 'not_found' : 'missing_match_id' };
+  }
 
   database.run(
     `
-      UPDATE hltv_match_maps
-      SET parsed_demo_checksum = ?,
+      UPDATE hltv_matches
+      SET added_to_game_library_at = ?,
           cache_updated_at = ?
       WHERE match_id = ?
-        AND local_demo_path = ?
     `,
-    [parsedDemoChecksum, cachedAt, matchId, localDemoPath],
+    [addedAt, addedAt, matchId],
   );
 
+  await persistHltvCacheIfAvailable(context, database);
+  return { ok: true };
+}
+
+async function clearHltvCache(context) {
+  const database = await context.getDatabase();
+  database.run('DELETE FROM hltv_match_maps;');
+  database.run('DELETE FROM hltv_matches;');
+  database.run('DELETE FROM hltv_players;');
+  database.run('DELETE FROM hltv_teams;');
+  await persistHltvCacheIfAvailable(context, database);
   return { ok: true };
 }
 
 module.exports = {
+  clearHltvCache,
   getHltvCacheSummary,
+  markHltvMatchAddedToGameLibrary,
   mapHltvMapRow,
   mapHltvMatchRow,
   mapHltvPlayerRow,

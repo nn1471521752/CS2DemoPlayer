@@ -401,42 +401,20 @@ const CREATE_PLAYER_DEMO_LINKS_INDEX_SQL = `
   ON player_demo_links (checksum);
 `;
 
-const CREATE_HLTV_ANALYSIS_QUEUE_TABLE_SQL = `
-  CREATE TABLE IF NOT EXISTS hltv_analysis_queue (
-    match_id TEXT PRIMARY KEY,
-    match_url TEXT NOT NULL DEFAULT '',
-    team1_name TEXT NOT NULL DEFAULT '',
-    team2_name TEXT NOT NULL DEFAULT '',
-    event_name TEXT NOT NULL DEFAULT '',
-    queue_reason TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL DEFAULT 'queued',
-    created_at TEXT NOT NULL DEFAULT '',
-    updated_at TEXT NOT NULL DEFAULT ''
-  );
+const DROP_HLTV_ANALYSIS_QUEUE_INDEX_SQL = `
+  DROP INDEX IF EXISTS idx_hltv_analysis_queue_status_updated_at;
 `;
 
-const CREATE_HLTV_ANALYSIS_QUEUE_INDEX_SQL = `
-  CREATE INDEX IF NOT EXISTS idx_hltv_analysis_queue_status_updated_at
-  ON hltv_analysis_queue (status, updated_at);
+const DROP_HLTV_ANALYSIS_QUEUE_TABLE_SQL = `
+  DROP TABLE IF EXISTS hltv_analysis_queue;
 `;
 
-const CREATE_HLTV_INSPIRATION_CARDS_TABLE_SQL = `
-  CREATE TABLE IF NOT EXISTS hltv_inspiration_cards (
-    match_id TEXT PRIMARY KEY,
-    match_url TEXT NOT NULL DEFAULT '',
-    team1_name TEXT NOT NULL DEFAULT '',
-    team2_name TEXT NOT NULL DEFAULT '',
-    event_name TEXT NOT NULL DEFAULT '',
-    title TEXT NOT NULL DEFAULT '',
-    note TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL DEFAULT '',
-    updated_at TEXT NOT NULL DEFAULT ''
-  );
+const DROP_HLTV_INSPIRATION_CARDS_INDEX_SQL = `
+  DROP INDEX IF EXISTS idx_hltv_inspiration_cards_updated_at;
 `;
 
-const CREATE_HLTV_INSPIRATION_CARDS_INDEX_SQL = `
-  CREATE INDEX IF NOT EXISTS idx_hltv_inspiration_cards_updated_at
-  ON hltv_inspiration_cards (updated_at);
+const DROP_HLTV_INSPIRATION_CARDS_TABLE_SQL = `
+  DROP TABLE IF EXISTS hltv_inspiration_cards;
 `;
 
 const CREATE_HLTV_MATCHES_TABLE_SQL = `
@@ -454,10 +432,12 @@ const CREATE_HLTV_MATCHES_TABLE_SQL = `
     match_format TEXT NOT NULL DEFAULT '',
     match_time_label TEXT NOT NULL DEFAULT '',
     match_timestamp_ms INTEGER,
+    hltv_star_rating INTEGER NOT NULL DEFAULT 0,
     has_demo INTEGER NOT NULL DEFAULT 0,
     downloaded_demo_path TEXT NOT NULL DEFAULT '',
     downloaded_file_size INTEGER NOT NULL DEFAULT 0,
     playable_demo_paths_json TEXT NOT NULL DEFAULT '[]',
+    added_to_game_library_at TEXT NOT NULL DEFAULT '',
     source TEXT NOT NULL DEFAULT 'hltv',
     first_seen_at TEXT NOT NULL DEFAULT '',
     last_seen_at TEXT NOT NULL DEFAULT '',
@@ -572,6 +552,73 @@ const CREATE_HLTV_PLAYERS_TEAM_ID_INDEX_SQL = `
   ON hltv_players (team_id);
 `;
 
+const CREATE_PLAYBOOK_MAPS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS playbook_maps (
+    map_id TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL DEFAULT '',
+    radar_image_path TEXT NOT NULL DEFAULT '',
+    has_radar_image INTEGER NOT NULL DEFAULT 0,
+    pos_x REAL NOT NULL DEFAULT 0,
+    pos_y REAL NOT NULL DEFAULT 0,
+    scale REAL NOT NULL DEFAULT 0,
+    threshold_z REAL NOT NULL DEFAULT 0,
+    source TEXT NOT NULL DEFAULT 'map-meta',
+    is_active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT ''
+  );
+`;
+
+const CREATE_PLAYBOOK_MAPS_DISPLAY_NAME_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_playbook_maps_display_name
+  ON playbook_maps (display_name);
+`;
+
+const CREATE_PLAYBOOK_GRENADES_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS playbook_grenades (
+    grenade_id TEXT PRIMARY KEY,
+    source_demo_checksum TEXT NOT NULL DEFAULT '',
+    source_round_number INTEGER NOT NULL DEFAULT 0,
+    source_entity_id TEXT NOT NULL DEFAULT '',
+    title TEXT NOT NULL DEFAULT '',
+    map_id TEXT NOT NULL DEFAULT '',
+    grenade_type TEXT NOT NULL DEFAULT '',
+    side TEXT NOT NULL DEFAULT 'unknown',
+    thrower_name TEXT NOT NULL DEFAULT '',
+    thrower_steamid TEXT NOT NULL DEFAULT '',
+    thrower_team_num INTEGER NOT NULL DEFAULT 0,
+    throw_tick INTEGER NOT NULL DEFAULT 0,
+    detonate_tick INTEGER NOT NULL DEFAULT 0,
+    start_x REAL NOT NULL DEFAULT 0,
+    start_y REAL NOT NULL DEFAULT 0,
+    start_z REAL NOT NULL DEFAULT 0,
+    end_x REAL NOT NULL DEFAULT 0,
+    end_y REAL NOT NULL DEFAULT 0,
+    end_z REAL NOT NULL DEFAULT 0,
+    trajectory_json TEXT NOT NULL DEFAULT '[]',
+    tags_json TEXT NOT NULL DEFAULT '[]',
+    notes TEXT NOT NULL DEFAULT '',
+    markdown_path TEXT NOT NULL DEFAULT '',
+    sync_mode TEXT NOT NULL DEFAULT 'sqlite-local',
+    content_hash TEXT NOT NULL DEFAULT '',
+    indexed_at TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT '',
+    UNIQUE(source_demo_checksum, source_round_number, source_entity_id),
+    FOREIGN KEY (map_id) REFERENCES playbook_maps(map_id) ON DELETE SET DEFAULT
+  );
+`;
+
+const CREATE_PLAYBOOK_GRENADES_SOURCE_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_playbook_grenades_source
+  ON playbook_grenades (source_demo_checksum, source_round_number);
+`;
+
+const CREATE_PLAYBOOK_GRENADES_MAP_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_playbook_grenades_map
+  ON playbook_grenades (map_id, grenade_type);
+`;
+
 const MIGRATION_BATCH = [
   CREATE_DEMOS_TABLE_SQL,
   UPDATE_DISPLAY_NAME_SQL,
@@ -610,10 +657,10 @@ const MIGRATION_BATCH = [
   CREATE_TEAM_DEMO_LINKS_INDEX_SQL,
   CREATE_PLAYER_DEMO_LINKS_TABLE_SQL,
   CREATE_PLAYER_DEMO_LINKS_INDEX_SQL,
-  CREATE_HLTV_ANALYSIS_QUEUE_TABLE_SQL,
-  CREATE_HLTV_ANALYSIS_QUEUE_INDEX_SQL,
-  CREATE_HLTV_INSPIRATION_CARDS_TABLE_SQL,
-  CREATE_HLTV_INSPIRATION_CARDS_INDEX_SQL,
+  DROP_HLTV_ANALYSIS_QUEUE_INDEX_SQL,
+  DROP_HLTV_ANALYSIS_QUEUE_TABLE_SQL,
+  DROP_HLTV_INSPIRATION_CARDS_INDEX_SQL,
+  DROP_HLTV_INSPIRATION_CARDS_TABLE_SQL,
   CREATE_HLTV_MATCHES_TABLE_SQL,
   CREATE_HLTV_MATCHES_HAS_DEMO_INDEX_SQL,
   CREATE_HLTV_MATCHES_CACHE_UPDATED_AT_INDEX_SQL,
@@ -629,6 +676,11 @@ const MIGRATION_BATCH = [
   CREATE_HLTV_PLAYERS_TABLE_SQL,
   CREATE_HLTV_PLAYERS_NORMALIZED_NICKNAME_INDEX_SQL,
   CREATE_HLTV_PLAYERS_TEAM_ID_INDEX_SQL,
+  CREATE_PLAYBOOK_MAPS_TABLE_SQL,
+  CREATE_PLAYBOOK_MAPS_DISPLAY_NAME_INDEX_SQL,
+  CREATE_PLAYBOOK_GRENADES_TABLE_SQL,
+  CREATE_PLAYBOOK_GRENADES_SOURCE_INDEX_SQL,
+  CREATE_PLAYBOOK_GRENADES_MAP_INDEX_SQL,
 ];
 
 function runBatch(database, statements) {
@@ -700,6 +752,30 @@ function ensureColumns(database, hasColumn) {
 
   if (!hasColumn(database, 'players', 'demo_count')) {
     database.run(`ALTER TABLE players ADD COLUMN demo_count INTEGER NOT NULL DEFAULT 0;`);
+  }
+
+  if (!hasColumn(database, 'hltv_matches', 'hltv_star_rating')) {
+    database.run(`ALTER TABLE hltv_matches ADD COLUMN hltv_star_rating INTEGER NOT NULL DEFAULT 0;`);
+  }
+
+  if (!hasColumn(database, 'hltv_matches', 'added_to_game_library_at')) {
+    database.run(`ALTER TABLE hltv_matches ADD COLUMN added_to_game_library_at TEXT NOT NULL DEFAULT '';`);
+  }
+
+  if (!hasColumn(database, 'playbook_grenades', 'markdown_path')) {
+    database.run(`ALTER TABLE playbook_grenades ADD COLUMN markdown_path TEXT NOT NULL DEFAULT '';`);
+  }
+
+  if (!hasColumn(database, 'playbook_grenades', 'sync_mode')) {
+    database.run(`ALTER TABLE playbook_grenades ADD COLUMN sync_mode TEXT NOT NULL DEFAULT 'sqlite-local';`);
+  }
+
+  if (!hasColumn(database, 'playbook_grenades', 'content_hash')) {
+    database.run(`ALTER TABLE playbook_grenades ADD COLUMN content_hash TEXT NOT NULL DEFAULT '';`);
+  }
+
+  if (!hasColumn(database, 'playbook_grenades', 'indexed_at')) {
+    database.run(`ALTER TABLE playbook_grenades ADD COLUMN indexed_at TEXT NOT NULL DEFAULT '';`);
   }
 }
 

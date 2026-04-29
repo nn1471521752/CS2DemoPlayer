@@ -542,29 +542,27 @@ def build_round_clock_state_entry(phase, remaining_seconds, total_seconds, is_pa
     }
 
 
-def build_round_clock_states(
-    parser,
-    start_tick,
-    end_tick,
-    source_tickrate,
-    bomb_planted_tick=None,
-    bomb_defused_tick=None,
-    bomb_exploded_tick=None,
-    frame_step=1,
-):
+def build_clock_fixed_ticks(start_tick, end_tick, frame_step=1):
     fixed_ticks = []
     safe_frame_step = max(1, int(frame_step))
     for tick_value in range(int(start_tick), int(end_tick) + 1, safe_frame_step):
         fixed_ticks.append(int(tick_value))
     if not fixed_ticks or fixed_ticks[-1] != int(end_tick):
         fixed_ticks.append(int(end_tick))
+    return fixed_ticks
 
-    raw_ticks = [fixed_tick_to_raw(tick_value, source_tickrate) for tick_value in fixed_ticks]
-    rules_by_tick = build_round_clock_rules_by_tick(
-        parse_round_clock_dataframe(parser, raw_ticks),
-        source_tickrate,
-    )
 
+def build_round_clock_states_from_rules(
+    start_tick,
+    end_tick,
+    rules_by_tick,
+    bomb_planted_tick=None,
+    bomb_defused_tick=None,
+    bomb_exploded_tick=None,
+    frame_step=1,
+):
+    fixed_ticks = build_clock_fixed_ticks(start_tick, end_tick, frame_step)
+    safe_rules_by_tick = rules_by_tick if isinstance(rules_by_tick, dict) else {}
     states_by_tick = {}
     previous_tick = None
     previous_pause_active = False
@@ -589,7 +587,7 @@ def build_round_clock_states(
                 else:
                     round_elapsed_seconds += elapsed_seconds
 
-        rules = rules_by_tick.get(int(tick_value), {})
+        rules = safe_rules_by_tick.get(int(tick_value), {})
         round_total_seconds = _to_non_negative_seconds(
             rules.get("round_time_seconds"),
             DEFAULT_GAME_ROUND_SECONDS,
@@ -676,6 +674,56 @@ def build_round_clock_states(
         previous_bomb_active = bomb_active
 
     return states_by_tick
+
+
+def build_round_clock_states(
+    parser,
+    start_tick,
+    end_tick,
+    source_tickrate,
+    bomb_planted_tick=None,
+    bomb_defused_tick=None,
+    bomb_exploded_tick=None,
+    frame_step=1,
+):
+    raw_ticks = [
+        fixed_tick_to_raw(tick_value, source_tickrate)
+        for tick_value in build_clock_fixed_ticks(start_tick, end_tick, frame_step)
+    ]
+    rules_by_tick = build_round_clock_rules_by_tick(
+        parse_round_clock_dataframe(parser, raw_ticks),
+        source_tickrate,
+    )
+    return build_round_clock_states_from_rules(
+        start_tick,
+        end_tick,
+        rules_by_tick,
+        bomb_planted_tick=bomb_planted_tick,
+        bomb_defused_tick=bomb_defused_tick,
+        bomb_exploded_tick=bomb_exploded_tick,
+        frame_step=frame_step,
+    )
+
+
+def build_export_clock_rules_by_tick(parser, rounds, source_tickrate, frame_step=1):
+    raw_ticks = set()
+    if not isinstance(rounds, list):
+        return {}
+
+    for round_meta in rounds:
+        if not isinstance(round_meta, dict):
+            continue
+        start_tick = _to_int_or_none(round_meta.get("start_tick"))
+        end_tick = _to_int_or_none(round_meta.get("end_tick"))
+        if start_tick is None or end_tick is None or end_tick < start_tick:
+            continue
+        for fixed_tick in build_clock_fixed_ticks(start_tick, end_tick, frame_step):
+            raw_ticks.add(fixed_tick_to_raw(fixed_tick, source_tickrate))
+
+    return build_round_clock_rules_by_tick(
+        parse_round_clock_dataframe(parser, raw_ticks),
+        source_tickrate,
+    )
 
 
 def _sanitize_json_value(value):
@@ -2084,6 +2132,7 @@ def build_export_tick_and_event_maps(parser, rounds, source_tickrate, include_gr
     shots_by_tick = build_shots_by_tick_from_dataframe(parse_weapon_fire_events_dataframe(parser))
     blinds_by_tick = build_blinds_by_tick_from_dataframe(parse_player_blind_events_dataframe(parser))
     damages_by_tick = build_damages_by_tick_from_dataframe(parse_player_hurt_events_dataframe(parser))
+    clock_rules_by_tick = build_export_clock_rules_by_tick(parser, rounds, source_tickrate, frame_step=1)
 
     bomb_event_dataframes = []
     for event_name, event_type in BOMB_EVENT_DEFINITIONS:
@@ -2121,6 +2170,7 @@ def build_export_tick_and_event_maps(parser, rounds, source_tickrate, include_gr
         "shots": shots_by_tick,
         "blinds": blinds_by_tick,
         "damages": damages_by_tick,
+        "clock_rules": clock_rules_by_tick,
     }
 
 
@@ -2444,11 +2494,10 @@ def run_export_csv_mode(parser, argv, normalized_map_name, raw_map_name, source_
                 include_grenades,
             )
             bomb_ticks = extract_bomb_timing_from_frames(frames)
-            clock_states_by_tick = build_round_clock_states(
-                parser,
+            clock_states_by_tick = build_round_clock_states_from_rules(
                 start_tick,
                 end_tick,
-                source_tickrate,
+                export_maps.get("clock_rules", {}),
                 bomb_planted_tick=bomb_ticks[0],
                 bomb_defused_tick=bomb_ticks[1],
                 bomb_exploded_tick=bomb_ticks[2],

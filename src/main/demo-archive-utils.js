@@ -39,6 +39,19 @@ function runTarCommand(args, options = {}) {
   });
 }
 
+function resolveArchiveEntryOutputPath(outputDir, entry) {
+  return path.join(outputDir, normalizeArchiveEntry(entry).replace(/\//g, path.sep));
+}
+
+function isExistingExtractedDemo(outputPath) {
+  try {
+    const stats = fs.statSync(outputPath);
+    return stats.isFile() && stats.size > 0;
+  } catch (_error) {
+    return false;
+  }
+}
+
 async function listArchiveDemoEntries(archivePath) {
   const result = await runTarCommand(['-tf', archivePath]);
   return parseArchiveDemoEntries(result.stdout);
@@ -51,8 +64,13 @@ async function extractArchiveDemoEntries(archivePath, outputDir, entries) {
   }
 
   fs.mkdirSync(outputDir, { recursive: true });
-  await runTarCommand(['-xf', archivePath, '-C', outputDir, ...normalizedEntries]);
-  return normalizedEntries.map((entry) => path.join(outputDir, entry.replace(/\//g, path.sep)));
+  const missingEntries = normalizedEntries.filter((entry) => (
+    !isExistingExtractedDemo(resolveArchiveEntryOutputPath(outputDir, entry))
+  ));
+  if (missingEntries.length > 0) {
+    await runTarCommand(['-xf', archivePath, '-C', outputDir, ...missingEntries]);
+  }
+  return normalizedEntries.map((entry) => resolveArchiveEntryOutputPath(outputDir, entry));
 }
 
 async function extractPlayableDemosFromArchive(archivePath, outputDir) {
@@ -66,4 +84,5 @@ module.exports = {
   isPlayableDemoArchiveEntry,
   listArchiveDemoEntries,
   parseArchiveDemoEntries,
+  resolveArchiveEntryOutputPath,
 };

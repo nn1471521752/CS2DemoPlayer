@@ -37,7 +37,15 @@ const { createHltvCacheService } = require('../src/main/hltv-cache-service.js');
       team1Name: 'NRG',
       team2Name: 'B8',
       eventName: 'BLAST',
+      hltvStarRating: 2,
       playableDemoPaths: ['E:/demos/nrg-vs-b8-m1-ancient.dem'],
+    },
+    {
+      matchId: '2391756',
+      team1Name: 'Low',
+      team2Name: 'Rated',
+      eventName: 'Small Cup',
+      hltvStarRating: 1,
     },
     {
       matchId: '',
@@ -48,6 +56,11 @@ const { createHltvCacheService } = require('../src/main/hltv-cache-service.js');
   assert.strictEqual(cacheResult.insertedMatches, 1, 'should count only valid matches');
   assert.strictEqual(upsertCalls.length, 1, 'should upsert through db helper');
   assert.strictEqual(upsertCalls[0].matches[0].matchId, '2391755');
+  assert.deepStrictEqual(
+    upsertCalls[0].matches.map((match) => match.matchId),
+    ['2391755'],
+    'should only cache matches with at least two HLTV stars',
+  );
   assert.strictEqual(upsertCalls[0].teams.length, 2, 'should derive minimal teams from match row');
   assert.strictEqual(upsertCalls[0].maps[0].mapSlug, 'ancient', 'should infer maps from demo path');
 

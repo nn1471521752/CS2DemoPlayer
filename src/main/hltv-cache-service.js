@@ -27,11 +27,13 @@ function buildTeamsFromMatch(match = {}) {
       teamId: match.team1Id || buildFallbackTeamId(match.team1Name),
       displayName: match.team1Name,
       normalizedName: normalizeText(match.team1Name).toLowerCase(),
+      logoUrl: match.team1LogoUrl,
     },
     {
       teamId: match.team2Id || buildFallbackTeamId(match.team2Name),
       displayName: match.team2Name,
       normalizedName: normalizeText(match.team2Name).toLowerCase(),
+      logoUrl: match.team2LogoUrl,
     },
   ].filter((team) => team.teamId && team.displayName);
 }
@@ -71,7 +73,7 @@ function createHltvCacheService(deps = {}) {
     async cacheRecentMatches(matches = [], options = {}) {
       const normalizedMatches = (Array.isArray(matches) ? matches : [])
         .map((match) => normalizeHltvCacheMatch(match))
-        .filter((match) => match.matchId);
+        .filter((match) => match.matchId && Number(match.hltvStarRating) >= 2);
 
       if (normalizedMatches.length === 0) {
         return buildCacheStats();

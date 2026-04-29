@@ -2,17 +2,17 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <title>CS2 Director - Tactical Radar Replay</title>
+  <title>CS2 Demo Player</title>
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
   <div class="control-panel app-toolbar">
-    <h2>CS2 Director Demo Player</h2>
+    <h2>CS2 Demo</h2>
     <div class="actions">
-      <button id="btn-back-home" class="is-hidden" type="button">Back To Home</button>
-      <button id="btn-open" type="button">Import Demo (.dem)</button>
-      <button id="btn-parse-db" type="button" disabled>Parse &amp; Save To DB</button>
-      <span id="status-text">Ready. Waiting for demo import...</span>
+      <button id="btn-back-home" class="is-hidden" type="button">Home</button>
+      <button id="btn-open" type="button">Import Demo</button>
+      <button id="btn-parse-db" type="button" disabled>Parse</button>
+      <span id="status-text">Ready</span>
     </div>
   </div>
 
@@ -23,7 +23,6 @@
           <div class="home-nav-brand-mark">CS2</div>
           <div class="home-nav-brand-copy">
             <div class="home-nav-brand-title">Demo Player</div>
-            <div class="home-nav-brand-subtitle">Tactical Workspace</div>
           </div>
           <button id="btn-home-nav-toggle" type="button" aria-label="Toggle navigation">Collapse</button>
         </div>
@@ -35,22 +34,19 @@
           <div class="page-shell demo-library-page-shell">
             <div class="page-header">
               <div class="page-header-copy">
-                <div class="page-eyebrow">Local Workspace</div>
-                <h3>Demo 库</h3>
-                <p class="page-subtitle">浏览本地 demo，进入回放，或从 HLTV 获取比赛后回到这里继续处理。</p>
+                <h3>Demo</h3>
               </div>
               <div class="page-header-actions">
-                <button id="btn-home-import-demo" type="button">Import Demo (.dem)</button>
-                <button id="btn-refresh-demos" type="button">Refresh</button>
+                <button id="btn-home-import-demo" type="button" class="page-action-button">Import Demo</button>
+                <button id="btn-refresh-demos" type="button" class="page-action-button">Refresh</button>
               </div>
             </div>
 
-            <div id="demo-library-summary" class="page-summary-strip"></div>
+            <div id="demo-library-summary" class="page-summary-strip is-hidden"></div>
 
             <aside class="library-panel home-library-panel">
-              <div class="library-section-label">Local demos</div>
               <div id="demo-list" class="demo-list">
-                <div class="demo-empty">No demos in database</div>
+                <div class="demo-empty">Import a demo to start.</div>
               </div>
               <div id="parse-job-progress" class="parse-job-progress is-hidden">
                 <div class="parse-job-header">
@@ -70,17 +66,16 @@
           <div class="page-shell hltv-local-library-page-shell">
             <div class="page-header">
               <div class="page-header-copy">
-                <div class="page-eyebrow">Local HLTV Cache</div>
-                <h3>本地资料库</h3>
-                <p class="page-subtitle">本地搜索已缓存的 HLTV 比赛、战队和选手；需要新数据时去 HLTV 页手动刷新。</p>
+                <h3>Library</h3>
               </div>
               <div class="page-header-actions">
-                <button id="btn-local-library-refresh" type="button">刷新本地</button>
-                <button id="btn-local-library-open-hltv" type="button">去 HLTV 拉新</button>
+                <button id="btn-local-library-refresh" type="button" class="page-action-button">刷新本地</button>
+                <button id="btn-local-library-clear-all" type="button" class="page-action-button is-danger">清除全部</button>
+                <button id="btn-local-library-open-hltv" type="button" class="page-action-button">去 HLTV 拉新</button>
               </div>
             </div>
 
-            <div id="local-library-summary" class="page-summary-strip"></div>
+            <div id="local-library-summary" class="page-summary-strip is-hidden"></div>
             <div id="local-library-status" class="hltv-status-panel is-hidden">加载中...</div>
             <div id="local-library-tab-list" class="entities-tab-list"></div>
 
@@ -91,8 +86,6 @@
                 <label class="hltv-filter-toggle"><input id="local-library-filter-demo-only" type="checkbox"><span>有 demo</span></label>
                 <label class="hltv-filter-toggle"><input id="local-library-filter-downloaded-only" type="checkbox"><span>已下载</span></label>
                 <label class="hltv-filter-toggle"><input id="local-library-filter-parsed-only" type="checkbox"><span>已解析</span></label>
-                <label class="hltv-filter-toggle"><input id="local-library-filter-queued-only" type="checkbox"><span>队列</span></label>
-                <label class="hltv-filter-toggle"><input id="local-library-filter-cards-only" type="checkbox"><span>卡片</span></label>
               </div>
               <div id="local-library-match-list" class="hltv-match-list"></div>
             </section>
@@ -113,97 +106,25 @@
           </div>
         </section>
 
-        <section id="entities-page" class="home-page is-hidden">
-          <div class="page-shell entities-page-shell">
+        <section id="playbook-page" class="home-page is-hidden">
+          <div class="page-shell playbook-page-shell">
             <div class="page-header">
               <div class="page-header-copy">
-                <div class="page-eyebrow">Entity Workspace</div>
-                <h3>Entities</h3>
-                <p class="page-subtitle">Review pending candidates from parsed demos, then browse approved teams and players.</p>
+                <h3>Playbook</h3>
               </div>
             </div>
 
-            <div id="entities-summary" class="page-summary-strip"></div>
+            <div id="playbook-summary" class="page-summary-strip is-hidden"></div>
+            <div id="playbook-status" class="hltv-status-panel is-hidden">加载中...</div>
+            <div id="playbook-tab-list" class="entities-tab-list"></div>
 
-            <div id="entities-status" class="entities-status-panel status-idle">Ready to load entity review state.</div>
+            <section id="playbook-panel-maps" class="playbook-panel">
+              <div id="playbook-map-grid" class="playbook-map-grid"></div>
+            </section>
 
-            <div class="entities-tab-strip" id="entities-tab-strip">
-              <div id="entities-tab-list" class="entities-tab-list"></div>
-            </div>
-
-            <div id="entities-panels" class="entities-panels">
-              <section
-                id="entities-panel-review"
-                class="entities-panel"
-                data-entities-panel="review"
-              >
-                <div class="entities-panel-card">
-                  <div class="entities-review-toolbar">
-                    <div>
-                      <div class="entities-section-eyebrow">Review Queue</div>
-                      <h4>Pending candidates</h4>
-                      <p id="entities-review-selection" class="entities-selection-copy">No candidates selected.</p>
-                    </div>
-                    <div class="entities-review-actions">
-                      <button id="btn-entities-approve-selected" type="button" class="entities-action-button is-primary" disabled>Approve selected</button>
-                      <button id="btn-entities-ignore-selected" type="button" class="entities-action-button" disabled>Ignore selected</button>
-                    </div>
-                  </div>
-
-                  <div class="entities-review-sections">
-                    <section class="entities-review-section">
-                      <div class="entities-section-header">
-                        <div class="entities-section-eyebrow">Teams</div>
-                        <h5>候选战队</h5>
-                      </div>
-                      <div id="entities-review-team-list" class="entities-list"></div>
-                    </section>
-
-                    <section class="entities-review-section">
-                      <div class="entities-section-header">
-                        <div class="entities-section-eyebrow">Players</div>
-                        <h5>候选选手</h5>
-                      </div>
-                      <div id="entities-review-player-list" class="entities-list"></div>
-                    </section>
-                  </div>
-                </div>
-              </section>
-
-              <section
-                id="entities-panel-teams"
-                class="entities-panel is-hidden"
-                data-entities-panel="teams"
-              >
-                <div class="entities-panel-card">
-                  <div class="entities-search-toolbar">
-                    <div>
-                      <div class="entities-section-eyebrow">Registry</div>
-                      <h4>已收录战队</h4>
-                    </div>
-                    <input id="entities-team-search" class="entities-search-input" type="search" placeholder="搜索战队">
-                  </div>
-                  <div id="entities-approved-team-list" class="entities-list"></div>
-                </div>
-              </section>
-
-              <section
-                id="entities-panel-players"
-                class="entities-panel is-hidden"
-                data-entities-panel="players"
-              >
-                <div class="entities-panel-card">
-                  <div class="entities-search-toolbar">
-                    <div>
-                      <div class="entities-section-eyebrow">Registry</div>
-                      <h4>已收录选手</h4>
-                    </div>
-                    <input id="entities-player-search" class="entities-search-input" type="search" placeholder="搜索选手或 SteamID">
-                  </div>
-                  <div id="entities-approved-player-list" class="entities-list"></div>
-                </div>
-              </section>
-            </div>
+            <section id="playbook-panel-grenades" class="playbook-panel is-hidden">
+              <div id="playbook-grenade-list" class="entities-list"></div>
+            </section>
           </div>
         </section>
 
@@ -211,102 +132,42 @@
           <div class="page-shell hltv-page-shell">
             <div class="page-header">
               <div class="page-header-copy">
-                <div class="page-eyebrow">External Source</div>
                 <h3>HLTV</h3>
               </div>
               <div class="page-header-actions">
-                <button id="btn-hltv-refresh" type="button">刷新</button>
+                <button id="btn-hltv-refresh" type="button" class="page-action-button">刷新</button>
               </div>
             </div>
-
-            <div id="hltv-discovery-summary" class="page-summary-strip"></div>
 
             <div id="hltv-status" class="hltv-status-panel is-hidden">刷新中...</div>
             <div id="hltv-cache-status" class="hltv-cache-status is-hidden"></div>
 
-            <div class="hltv-discovery-toolbar">
-              <label class="hltv-filter-field hltv-filter-field-search" for="hltv-filter-search">
-                <input id="hltv-filter-search" class="hltv-filter-input" type="search" placeholder="搜索队伍、赛事">
-              </label>
-              <label class="hltv-filter-toggle" for="hltv-filter-demo-only">
-                <input id="hltv-filter-demo-only" type="checkbox">
-                <span>有 demo</span>
-              </label>
-              <label class="hltv-filter-toggle" for="hltv-filter-close-only">
-                <input id="hltv-filter-close-only" type="checkbox">
-                <span>胶着</span>
-              </label>
-              <label class="hltv-filter-toggle" for="hltv-filter-featured-only">
-                <input id="hltv-filter-featured-only" type="checkbox">
-                <span>大赛</span>
-              </label>
-              <button id="btn-hltv-reset-filters" class="hltv-filter-reset" type="button">重置</button>
-            </div>
-
-            <div class="hltv-discovery-layout">
-              <div class="hltv-discovery-main">
-                <section class="hltv-discovery-section">
-                  <div class="hltv-section-header">
-                    <div>
-                      <div class="library-section-label">Recommended</div>
-                      <div id="hltv-recommended-summary" class="hltv-section-summary"></div>
-                    </div>
+            <div class="hltv-results-layout">
+              <section class="hltv-results-content">
+                <div class="hltv-results-title-row">
+                  <div>
+                    <h4>Results</h4>
+                    <div id="hltv-browse-summary" class="hltv-section-summary"></div>
                   </div>
-                  <div id="hltv-recommended-list" class="hltv-match-list hltv-match-list-static">
-                    <div class="demo-empty">刷新后查看推荐。</div>
+                  <div class="hltv-results-toolbar">
+                    <input
+                      id="hltv-filter-search"
+                      class="hltv-filter-input hltv-filter-inline"
+                      type="search"
+                      placeholder="搜索队伍、赛事、Match ID"
+                    >
+                    <label class="hltv-filter-toggle hltv-filter-inline-toggle">
+                      <input id="hltv-filter-demo-only" type="checkbox">
+                      <span>有 demo</span>
+                    </label>
+                    <button id="btn-hltv-search" class="hltv-filter-reset" type="button">搜索HLTV</button>
+                    <button id="btn-hltv-reset-filters" class="hltv-filter-reset" type="button">重置</button>
                   </div>
-                </section>
-
-                <section class="hltv-discovery-section">
-                  <div class="hltv-section-header">
-                    <div>
-                      <div class="library-section-label">Browse</div>
-                      <div id="hltv-browse-summary" class="hltv-section-summary"></div>
-                    </div>
-                  </div>
-                  <div id="hltv-match-list" class="hltv-match-list">
-                    <div class="demo-empty">刷新后查看比赛。</div>
-                  </div>
-                </section>
-              </div>
-
-              <aside class="hltv-discovery-sidebar">
-                <section class="hltv-discovery-section hltv-side-section">
-                  <div class="hltv-section-header">
-                    <div>
-                      <div class="library-section-label">Analysis Queue</div>
-                      <div id="hltv-queue-summary" class="hltv-section-summary">Queue is empty.</div>
-                    </div>
-                  </div>
-                  <div id="hltv-queue-list" class="hltv-side-list">
-                    <div class="demo-empty">Queue is empty.</div>
-                  </div>
-                </section>
-
-                <section class="hltv-discovery-section hltv-side-section">
-                  <div class="hltv-section-header">
-                    <div>
-                      <div class="library-section-label">Inspiration Cards</div>
-                      <div id="hltv-card-summary" class="hltv-section-summary">No inspiration cards saved.</div>
-                    </div>
-                  </div>
-
-                  <div class="hltv-card-editor">
-                    <div id="hltv-card-match-label" class="hltv-card-match-label">Select a match to save a card.</div>
-                    <input id="hltv-card-title" class="hltv-card-input" type="text" placeholder="Card title">
-                    <textarea id="hltv-card-note" class="hltv-card-textarea" placeholder="Why is this match worth watching?"></textarea>
-                    <div class="hltv-card-toolbar">
-                      <button id="btn-hltv-card-save" class="hltv-card-action is-primary" type="button">Save Card</button>
-                      <button id="btn-hltv-card-delete" class="hltv-card-action" type="button">Delete</button>
-                      <button id="btn-hltv-card-clear" class="hltv-card-action" type="button">Clear</button>
-                    </div>
-                  </div>
-
-                  <div id="hltv-card-list" class="hltv-side-list">
-                    <div class="demo-empty">No inspiration cards saved.</div>
-                  </div>
-                </section>
-              </aside>
+                </div>
+                <div id="hltv-match-list" class="hltv-match-list">
+                  <div class="demo-empty">刷新后查看比赛。</div>
+                </div>
+              </section>
             </div>
           </div>
         </section>
@@ -327,6 +188,17 @@
         <div id="round-list" class="round-list">
           <div class="round-empty">No rounds</div>
         </div>
+        <section class="playbook-round-import-panel">
+          <div class="playbook-round-import-header">
+            <div>
+              <div class="playbook-round-import-eyebrow">Playbook</div>
+              <h4>投掷物候选</h4>
+            </div>
+            <button id="btn-playbook-import-grenades" type="button" disabled>导入选中</button>
+          </div>
+          <div id="playbook-round-grenade-status" class="playbook-round-grenade-status">加载回合后可查看投掷物候选。</div>
+          <div id="playbook-round-grenade-candidates" class="playbook-round-grenade-candidates"></div>
+        </section>
       </aside>
     </div>
 
@@ -353,14 +225,15 @@
   <script src="js/ui/team-panel-header-utils.js"></script>
   <script src="js/ui/hud-slot-layout-utils.js"></script>
   <script src="js/ui/demo-library-page-utils.js"></script>
-  <script src="js/ui/entities-page-utils.js"></script>
+  <script src="js/ui/playbook-page-utils.js"></script>
+  <script src="js/ui/playbook-grenade-candidate-utils.js"></script>
   <script src="js/ui/hltv-local-library-page-utils.js"></script>
   <script src="js/ui/hltv-page-utils.js"></script>
   <script src="js/ui/hltv-results-view-utils.js"></script>
-  <script src="js/ui/hltv-inspiration-view-utils.js"></script>
+  <script src="js/ui/hltv-results-grouping-utils.js"></script>
   <script src="js/ui/library.js"></script>
   <script src="js/ui/hltv-local-library-page.js"></script>
-  <script src="js/ui/entities-page.js"></script>
+  <script src="js/ui/playbook-page.js"></script>
   <script src="js/ui/hltv-page.js"></script>
   <script src="js/ui/hud.js"></script>
   <script src="js/ui/grenade-visual-utils.js"></script>

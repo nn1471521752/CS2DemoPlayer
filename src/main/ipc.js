@@ -38,13 +38,6 @@ const {
   listParsedDemoEntityInputs,
   listPendingPlayerCandidates,
   listPendingTeamCandidates,
-  listAnalysisQueueItems,
-  upsertAnalysisQueueItem,
-  deleteAnalysisQueueItem,
-  listInspirationCards,
-  getInspirationCard,
-  upsertInspirationCard,
-  deleteInspirationCard,
   listDemos,
   renameDemo,
   replacePlayerCandidates,
@@ -63,9 +56,20 @@ const {
   getDebugInfo,
   setTeamLogoMetadata,
   getHltvCacheSummary,
+  clearHltvCache,
+  markHltvMatchAddedToGameLibrary,
+  getPlaybookSummary,
+  importPlaybookGrenades,
+  listPlaybookGrenades,
+  listPlaybookMaps,
+  scanPlaybookMarkdown,
+  writePlaybookGrenadeDrafts,
+  updatePlaybookGrenadeMarkdown,
+  updatePlaybookGrenade,
   searchHltvCachedMatches,
   searchHltvCachedPlayers,
   searchHltvCachedTeams,
+  syncPlaybookMapsFromStaticMeta,
   updateHltvCachedDemoDownload,
   updateHltvCachedMapParsedDemo,
   upsertHltvCacheMatches,
@@ -100,8 +104,14 @@ const {
   createHltvLocalLibraryService,
 } = require('./hltv-local-library-service');
 const {
+  createPlaybookService,
+} = require('./playbook-service');
+const {
   isSupportedDemoPath,
 } = require('./demo-path-utils');
+const {
+  buildCachedDemoParserResult,
+} = require('./demo-index-utils');
 
 const projectRoot = path.resolve(__dirname, '../..');
 const pythonScript = path.join(__dirname, '../python/engine.py');
@@ -123,21 +133,27 @@ const hltvCacheService = createHltvCacheService({
 });
 const hltvLocalLibraryService = createHltvLocalLibraryService({
   getHltvCacheSummary,
+  clearHltvCache,
+  markHltvMatchAddedToGameLibrary,
   searchHltvCachedMatches,
   searchHltvCachedTeams,
   searchHltvCachedPlayers,
+});
+const playbookService = createPlaybookService({
+  syncPlaybookMapsFromStaticMeta,
+  importPlaybookGrenades,
+  listPlaybookGrenades,
+  listPlaybookMaps,
+  getPlaybookSummary,
+  scanPlaybookMarkdown,
+  writePlaybookGrenadeDrafts,
+  updatePlaybookGrenadeMarkdown,
+  updatePlaybookGrenade,
 });
 const hltvDiscoveryService = createHltvDiscoveryService({
   getRecentMatchesState: async () => hltvRuntime.getRecentMatchesState(),
   refreshRecentMatches: async () => hltvRuntime.refreshRecentMatches(),
   cacheRecentMatches: (matches) => hltvCacheService.cacheRecentMatches(matches),
-  listAnalysisQueueItems,
-  upsertAnalysisQueueItem,
-  deleteAnalysisQueueItem,
-  listInspirationCards,
-  getInspirationCard,
-  upsertInspirationCard,
-  deleteInspirationCard,
 });
 const entitiesService = createEntitiesService({
   repository: createDbFacadeEntitiesRepository({
@@ -1085,7 +1101,7 @@ async function handleParseCurrentDemo(event, payload = {}) {
     return buildAnalyzeError(selectionError);
   }
 
-  const parserResult = await runParser(selectedDemoPath, 'index');
+  const parserResult = await resolveCurrentDemoParserIndex();
   if (parserResult.status !== 'success') {
     return parserResult;
   }
@@ -1102,6 +1118,28 @@ async function handleParseCurrentDemo(event, payload = {}) {
       demoPath: selectedDemoPath,
       checksum: selectedDemoChecksum,
     });
+  }
+}
+
+async function resolveCurrentDemoParserIndex() {
+  const cachedParserResult = await getCachedCurrentDemoParserIndex();
+  if (cachedParserResult) {
+    return cachedParserResult;
+  }
+  return runParser(selectedDemoPath, 'index');
+}
+
+async function getCachedCurrentDemoParserIndex() {
+  if (!selectedDemoChecksum) {
+    return null;
+  }
+
+  try {
+    const cachedDemo = await getDemoByChecksum(selectedDemoChecksum);
+    return buildCachedDemoParserResult(cachedDemo, { checksum: selectedDemoChecksum });
+  } catch (error) {
+    console.warn(`[Demo Parse] failed to reuse cached index: ${error.message}`);
+    return null;
   }
 }
 
@@ -1926,27 +1964,65 @@ async function handleHltvListRecentMatches() {
 }
 
 async function handleHltvGetDiscoveryState() {
-  return hltvDiscoveryService.getDiscoveryState();
+  const startedAt = Date.now();
+  console.log('[HLTV IPC] get discovery state start');
+  const response = await hltvDiscoveryService.getDiscoveryState();
+  console.log(
+    `[HLTV IPC] get discovery state done elapsedMs=${Date.now() - startedAt} status=${response?.status || ''} matches=${Array.isArray(response?.matches) ? response.matches.length : -1}`,
+  );
+  return response;
 }
 
 async function handleHltvRefreshDiscoveryState() {
-  return hltvDiscoveryService.refreshDiscoveryState();
+  const startedAt = Date.now();
+  console.log('[HLTV IPC] refresh discovery state start');
+  const response = await hltvDiscoveryService.refreshDiscoveryState();
+  console.log(
+    `[HLTV IPC] refresh discovery state done elapsedMs=${Date.now() - startedAt} status=${response?.status || ''} matches=${Array.isArray(response?.matches) ? response.matches.length : -1}`,
+  );
+  return response;
 }
 
-async function handleHltvQueueMatch(_event, payload = {}) {
-  return hltvDiscoveryService.queueMatch(payload);
-}
+async function handleHltvSearchMatches(_event, payload = {}) {
+  const startedAt = Date.now();
+  console.log(`[HLTV IPC] search matches start query=${String(payload?.query || '').trim()}`);
+  const response = await hltvService.searchMatches(payload);
+  if (response?.status !== 'success') {
+    return {
+      status: 'error',
+      detail: response?.detail || response?.reason || 'HLTV search failed.',
+      updatedAt: '',
+      cacheSummary: null,
+      summary: {
+        totalMatches: 0,
+      },
+      matches: [],
+    };
+  }
 
-async function handleHltvRemoveQueuedMatch(_event, payload = {}) {
-  return hltvDiscoveryService.removeQueuedMatch(payload);
-}
+  let cacheSummary = null;
+  try {
+    cacheSummary = await hltvCacheService.cacheRecentMatches(response.matches || []);
+  } catch (error) {
+    cacheSummary = {
+      error: String(error?.message || error || '').trim(),
+    };
+  }
 
-async function handleHltvSaveInspirationCard(_event, payload = {}) {
-  return hltvDiscoveryService.saveInspirationCard(payload);
-}
-
-async function handleHltvDeleteInspirationCard(_event, payload = {}) {
-  return hltvDiscoveryService.deleteInspirationCard(payload);
+  const matches = Array.isArray(response.matches) ? response.matches : [];
+  console.log(
+    `[HLTV IPC] search matches done elapsedMs=${Date.now() - startedAt} matches=${matches.length}`,
+  );
+  return {
+    status: 'success',
+    detail: `${matches.length} 场搜索结果`,
+    updatedAt: new Date().toISOString(),
+    cacheSummary,
+    summary: {
+      totalMatches: matches.length,
+    },
+    matches,
+  };
 }
 
 async function handleHltvDownloadDemo(_event, payload = {}) {
@@ -1986,8 +2062,28 @@ async function handleHltvLibrarySearchPlayers(_event, payload = {}) {
   return hltvLocalLibraryService.searchPlayers(payload);
 }
 
+async function handleHltvCacheClearAll() {
+  return hltvLocalLibraryService.clearCache();
+}
+
+async function handleHltvCacheAddToGameLibrary(_event, payload = {}) {
+  return hltvLocalLibraryService.addMatchToGameLibrary(payload);
+}
+
 async function handleEntitiesGetPageState() {
   return entitiesService.getEntitiesPageState();
+}
+
+async function handlePlaybookGetState() {
+  return playbookService.getPlaybookState();
+}
+
+async function handlePlaybookImportSelectedGrenades(_event, payload = {}) {
+  return playbookService.importSelectedGrenades(payload);
+}
+
+async function handlePlaybookUpdateGrenade(_event, payload = {}) {
+  return playbookService.updateGrenade(payload);
 }
 
 async function handleEntitiesApproveCandidates(_event, payload = {}) {
@@ -2011,15 +2107,17 @@ ipcMain.handle('hltv-refresh-recent-matches', handleHltvRefreshRecentMatches);
 ipcMain.handle('hltv-list-recent-matches', handleHltvListRecentMatches);
 ipcMain.handle('hltv-get-discovery-state', handleHltvGetDiscoveryState);
 ipcMain.handle('hltv-refresh-discovery-state', handleHltvRefreshDiscoveryState);
-ipcMain.handle('hltv-queue-match', handleHltvQueueMatch);
-ipcMain.handle('hltv-remove-queued-match', handleHltvRemoveQueuedMatch);
-ipcMain.handle('hltv-save-inspiration-card', handleHltvSaveInspirationCard);
-ipcMain.handle('hltv-delete-inspiration-card', handleHltvDeleteInspirationCard);
+ipcMain.handle('hltv-search-matches', handleHltvSearchMatches);
 ipcMain.handle('hltv-download-demo', handleHltvDownloadDemo);
 ipcMain.handle('hltv-library-get-state', handleHltvLibraryGetState);
 ipcMain.handle('hltv-library-search-matches', handleHltvLibrarySearchMatches);
 ipcMain.handle('hltv-library-search-teams', handleHltvLibrarySearchTeams);
 ipcMain.handle('hltv-library-search-players', handleHltvLibrarySearchPlayers);
+ipcMain.handle('hltv-cache-clear-all', handleHltvCacheClearAll);
+ipcMain.handle('hltv-cache-add-to-game-library', handleHltvCacheAddToGameLibrary);
+ipcMain.handle('playbook-get-state', handlePlaybookGetState);
+ipcMain.handle('playbook-import-selected-grenades', handlePlaybookImportSelectedGrenades);
+ipcMain.handle('playbook-update-grenade', handlePlaybookUpdateGrenade);
 ipcMain.handle('entities-get-page-state', handleEntitiesGetPageState);
 ipcMain.handle('entities-approve-candidates', handleEntitiesApproveCandidates);
 ipcMain.handle('entities-ignore-candidates', handleEntitiesIgnoreCandidates);

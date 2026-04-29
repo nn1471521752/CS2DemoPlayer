@@ -33,16 +33,17 @@
 ## 文档同步原则
 
 - 项目目标、阶段、阻塞、对外行为变化后，按需同步更新：
-  - `E:\obsidian\02-Apps\CS2DemoPlayer\Hub.md`
-  - `E:\obsidian\02-Apps\CS2DemoPlayer\Sprint.md`
-  - `E:\obsidian\02-Apps\CS2DemoPlayer\Changelog.md`
+  - `E:\obsidian\10-Apps\CS2DemoPlayer\Hub.md`
+  - `E:\obsidian\10-Apps\CS2DemoPlayer\Sprint.md`
+  - `E:\obsidian\10-Apps\CS2DemoPlayer\Changelog.md`
 - 默认开发流程是：`app-pre-dev-sync -> app-worklog-pulse（开发中明确节点时） -> app-post-dev-sync`。
 - 这 3 个 app skills 由 `E:\codex-skills` 管理，并安装到 `C:\Users\Administrator\.codex\skills`。
-- 开始开发前，先读取对应 `Hub.md`、`Sprint.md`、`Changelog.md`，并检查当天 `01-Daily` 是否已经聚焦到 CS2DemoPlayer。
+- 开始开发前，优先读取对应 `Hub.md`、`Sprint.md`、`Changelog.md`，并检查当天 `01-Daily` 是否已经聚焦到 CS2DemoPlayer；如果当天 Daily 还不存在，不要求先做完整日计划，先补建最小 Daily 即可。
 - 开发中完成明确节点后，优先补记当天 `01-Daily` 的执行记录，再决定是否同步项目页。
+- 如果已经先改了代码、后补同步，也应基于仓库改动证据把当天 `01-Daily` 补齐，而不是因为缺少前置 Daily 就跳过这轮记录。
 - 结束任务前，至少检查当天 `01-Daily`、`Sprint.md`、`Changelog.md`；只有项目级目标、阶段或阻塞变化时再更新 `Hub.md`。
-- 如果本轮变化会影响 Demo 记录、视频项目或脚本链路，也要检查 `E:\obsidian\03-Demos\`、`04-Video-Projects\`、`05-Scripts\` 是否需要同步。
-- 如果一个阶段结束、问题重复出现或需要复盘，再检查 `E:\obsidian\08-Reviews\`。
+- 如果本轮变化会影响 Demo 记录、视频项目或脚本链路，也要检查 `E:\obsidian\21-Demos\`、`22-Video-Workflow\`、`20-Playbook\` 是否需要同步。
+- 如果一个阶段结束、问题重复出现或需要复盘，再检查 `E:\obsidian\11-Reviews\`。
 
 ## 工作日切换规则
 

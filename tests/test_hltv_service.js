@@ -4,6 +4,7 @@ const {
   createHltvService,
   listRecentMatchesFromPage,
   resolveDefaultHltvHeadless,
+  searchMatchesFromPage,
 } = require('../src/main/hltv-service.js');
 
 assert.strictEqual(
@@ -79,6 +80,73 @@ assert.strictEqual(
       ['waitForLoadState', 'domcontentloaded'],
     ],
     'should drive the provided page instead of creating its own browser session',
+  );
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+
+(async () => {
+  const fakePageCalls = [];
+  const fakePage = {
+    async goto(url, options) {
+      fakePageCalls.push(['goto', url, options?.waitUntil || '']);
+    },
+    async waitForLoadState(state) {
+      fakePageCalls.push(['waitForLoadState', state]);
+    },
+    async title() {
+      return 'Search | HLTV.org';
+    },
+    async content() {
+      return `
+        <a href="/matches/2391888/spirit-vs-vitality-iem-melbourne-2026" class="a-reset">
+          <div class="result">
+            <div class="line-align team1"><div class="team">Spirit</div></div>
+            <div class="line-align team2"><div class="team">Vitality</div></div>
+            <span class="event-name">IEM Melbourne 2026</span>
+            <div class="map-and-stars">
+              <div class="map map-text">bo3</div>
+              <div class="stars"><i class="fa fa-star star"></i><i class="fa fa-star star"></i></div>
+            </div>
+          </div>
+        </a>
+      `;
+    },
+    url() {
+      return 'https://www.hltv.org/search?query=spirit';
+    },
+  };
+
+  const searchResult = await searchMatchesFromPage(fakePage, {
+    baseUrl: 'https://www.hltv.org',
+    query: 'spirit vitality',
+    limit: 5,
+  });
+
+  assert.deepStrictEqual(
+    searchResult,
+    [
+      {
+        matchId: '2391888',
+        matchUrl: 'https://www.hltv.org/matches/2391888/spirit-vs-vitality-iem-melbourne-2026',
+        team1Name: 'Spirit',
+        team2Name: 'Vitality',
+        eventName: 'IEM Melbourne 2026',
+        matchFormat: 'bo3',
+        hltvStarRating: 2,
+      },
+    ],
+    'should search HLTV matches through an existing page and preserve star rating',
+  );
+
+  assert.deepStrictEqual(
+    fakePageCalls,
+    [
+      ['goto', 'https://www.hltv.org/search?query=spirit%20vitality', 'domcontentloaded'],
+      ['waitForLoadState', 'domcontentloaded'],
+    ],
+    'should navigate to the HLTV search URL with the encoded query',
   );
 })().catch((error) => {
   console.error(error);

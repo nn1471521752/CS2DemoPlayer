@@ -49,6 +49,12 @@ function normalizeMatchMeta(matchMeta = {}) {
   const team2Score = Number.isFinite(Number(matchMeta.team2Score)) ? Number(matchMeta.team2Score) : null;
   const matchFormat = normalizeText(matchMeta.matchFormat);
   const matchTimeLabel = normalizeText(matchMeta.matchTimeLabel);
+  const matchTimestampMs = Number.isFinite(Number(matchMeta.matchTimestampMs)) ? Number(matchMeta.matchTimestampMs) : null;
+  const hltvStarRating = Number.isFinite(Number(matchMeta.hltvStarRating))
+    ? Math.max(0, Math.min(5, Number(matchMeta.hltvStarRating)))
+    : 0;
+  const team1LogoUrl = normalizeText(matchMeta.team1LogoUrl);
+  const team2LogoUrl = normalizeText(matchMeta.team2LogoUrl);
 
   if (team1Score !== null) {
     normalizedMatchMeta.team1Score = team1Score;
@@ -61,6 +67,18 @@ function normalizeMatchMeta(matchMeta = {}) {
   }
   if (matchTimeLabel) {
     normalizedMatchMeta.matchTimeLabel = matchTimeLabel;
+  }
+  if (matchTimestampMs !== null) {
+    normalizedMatchMeta.matchTimestampMs = matchTimestampMs;
+  }
+  if (hltvStarRating > 0) {
+    normalizedMatchMeta.hltvStarRating = hltvStarRating;
+  }
+  if (team1LogoUrl) {
+    normalizedMatchMeta.team1LogoUrl = team1LogoUrl;
+  }
+  if (team2LogoUrl) {
+    normalizedMatchMeta.team2LogoUrl = team2LogoUrl;
   }
   if (typeof matchMeta.hasDemo === 'boolean') {
     normalizedMatchMeta.hasDemo = matchMeta.hasDemo;
@@ -120,6 +138,8 @@ async function listRecentMatchesFromPage(page, options = {}) {
     throw new Error('A Playwright page is required');
   }
 
+  const startedAt = Date.now();
+  console.log(`[HLTV] listRecentMatchesFromPage start resultsUrl=${options.resultsUrl || ''}`);
   await page.goto(options.resultsUrl, { waitUntil: 'domcontentloaded' });
   await page.waitForLoadState('domcontentloaded');
   const pageSnapshot = {
@@ -127,8 +147,14 @@ async function listRecentMatchesFromPage(page, options = {}) {
     html: await page.content(),
     url: page.url(),
   };
+  console.log(
+    `[HLTV] results page loaded elapsedMs=${Date.now() - startedAt} title="${normalizeText(pageSnapshot.title)}" url=${pageSnapshot.url}`,
+  );
   const pageState = classifyResultsPageState(pageSnapshot);
   if (!pageState.ok) {
+    console.warn(
+      `[HLTV] results page blocked reason=${pageState.reason} elapsedMs=${Date.now() - startedAt}`,
+    );
     return {
       ok: false,
       reason: pageState.reason,
@@ -141,8 +167,14 @@ async function listRecentMatchesFromPage(page, options = {}) {
     baseUrl: options.baseUrl,
     limit: options.limit,
   });
+  console.log(
+    `[HLTV] parsed recent matches count=${matches.length} elapsedMs=${Date.now() - startedAt}`,
+  );
 
   if (matches.length === 0) {
+    console.warn(
+      `[HLTV] selector mismatch no recent matches found elapsedMs=${Date.now() - startedAt}`,
+    );
     return {
       ok: false,
       reason: 'selector_mismatch',
@@ -150,6 +182,54 @@ async function listRecentMatchesFromPage(page, options = {}) {
     };
   }
 
+  return matches;
+}
+
+function buildHltvSearchUrl(options = {}) {
+  const normalizedBaseUrl = normalizeText(options.baseUrl) || DEFAULT_HLTV_BASE_URL;
+  const query = normalizeText(options.query);
+  const searchUrl = normalizeText(options.searchUrl) || `${normalizedBaseUrl.replace(/\/+$/, '')}/search`;
+  return `${searchUrl}?query=${encodeURIComponent(query)}`;
+}
+
+async function searchMatchesFromPage(page, options = {}) {
+  if (!page || typeof page.goto !== 'function') {
+    throw new Error('A Playwright page is required');
+  }
+
+  const query = normalizeText(options.query);
+  if (!query) {
+    return [];
+  }
+
+  const startedAt = Date.now();
+  const searchUrl = buildHltvSearchUrl(options);
+  console.log(`[HLTV] searchMatchesFromPage start searchUrl=${searchUrl}`);
+  await page.goto(searchUrl, { waitUntil: 'domcontentloaded' });
+  await page.waitForLoadState('domcontentloaded');
+  const pageSnapshot = {
+    title: await page.title(),
+    html: await page.content(),
+    url: page.url(),
+  };
+  const pageState = classifyResultsPageState(pageSnapshot);
+  if (!pageState.ok) {
+    console.warn(
+      `[HLTV] search page blocked reason=${pageState.reason} elapsedMs=${Date.now() - startedAt}`,
+    );
+    return {
+      ok: false,
+      reason: pageState.reason,
+      detail: normalizeText(pageSnapshot.title),
+    };
+  }
+
+  const matches = listRecentMatches({
+    html: pageSnapshot.html,
+    baseUrl: options.baseUrl,
+    limit: options.limit,
+  }).map((matchMeta) => normalizeMatchMeta(matchMeta));
+  console.log(`[HLTV] parsed search matches count=${matches.length} elapsedMs=${Date.now() - startedAt}`);
   return matches;
 }
 
@@ -204,8 +284,23 @@ async function downloadAndExtractMatchDemo(matchMeta, options = {}) {
   }
 }
 
+async function searchMatchesWithBrowser(options = {}) {
+  const session = await createHltvBrowserSession({
+    headless: options.headless,
+    timeoutMs: options.timeoutMs,
+    executablePath: options.executablePath || undefined,
+  });
+
+  try {
+    return await searchMatchesFromPage(session.page, options);
+  } finally {
+    await session.close();
+  }
+}
+
 function createHltvService(dependencies = {}) {
   const listRecentMatchesDependency = dependencies?.listRecentMatches;
+  const searchMatchesDependency = dependencies?.searchMatches;
   const downloadMatchDemoDependency = dependencies?.downloadMatchDemo;
 
   if (typeof listRecentMatchesDependency !== 'function') {
@@ -219,6 +314,28 @@ function createHltvService(dependencies = {}) {
     async fetchRecentMatches() {
       try {
         return normalizeRecentMatchListResult(await listRecentMatchesDependency());
+      } catch (error) {
+        return {
+          status: 'error',
+          reason: 'unexpected_error',
+          detail: normalizeText(error?.message || error),
+          matches: [],
+        };
+      }
+    },
+
+    async searchMatches(payload = {}) {
+      if (typeof searchMatchesDependency !== 'function') {
+        return {
+          status: 'error',
+          reason: 'search_not_configured',
+          detail: 'HLTV search dependency is not configured.',
+          matches: [],
+        };
+      }
+
+      try {
+        return normalizeRecentMatchListResult(await searchMatchesDependency(payload));
       } catch (error) {
         return {
           status: 'error',
@@ -287,6 +404,14 @@ function createDefaultHltvService(options = {}) {
       timeoutMs,
       executablePath,
     }),
+    searchMatches: async (payload = {}) => searchMatchesWithBrowser({
+      baseUrl,
+      query: payload.query,
+      limit,
+      headless,
+      timeoutMs,
+      executablePath,
+    }),
   });
 }
 
@@ -299,4 +424,6 @@ module.exports = {
   normalizeMatchMeta,
   resolveDefaultHltvHeadless,
   resolveHltvExecutablePath,
+  searchMatchesFromPage,
+  searchMatchesWithBrowser,
 };

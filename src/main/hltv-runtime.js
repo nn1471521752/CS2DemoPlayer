@@ -70,10 +70,13 @@ function createHltvRuntime(dependencies = {}) {
 
   async function refreshRecentMatches() {
     if (activeRefreshPromise) {
+      console.log('[HLTV Runtime] refresh already active; returning existing promise');
       return activeRefreshPromise;
     }
 
     activeRefreshPromise = (async () => {
+      const startedAt = Date.now();
+      console.log('[HLTV Runtime] refresh start');
       recentMatchesState = {
         ...recentMatchesState,
         status: 'loading',
@@ -90,6 +93,9 @@ function createHltvRuntime(dependencies = {}) {
           updatedAt: new Date().toISOString(),
           isRuntimeReady: true,
         };
+        console.log(
+          `[HLTV Runtime] refresh success matches=${recentMatchesState.matches.length} elapsedMs=${Date.now() - startedAt}`,
+        );
       } catch (error) {
         recentMatchesState = {
           ...recentMatchesState,
@@ -99,6 +105,9 @@ function createHltvRuntime(dependencies = {}) {
           updatedAt: '',
           isRuntimeReady: Boolean(currentSession),
         };
+        console.error(
+          `[HLTV Runtime] refresh error elapsedMs=${Date.now() - startedAt} detail=${recentMatchesState.detail}`,
+        );
       }
 
       return cloneRecentMatchesState(recentMatchesState);

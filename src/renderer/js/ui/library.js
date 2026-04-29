@@ -146,6 +146,7 @@ function applyDemoResponseToUi(response) {
   resetRoundBombClockState();
   resetParsedRoundClockStates();
   framesData = [];
+  resetPlaybookRoundGrenadeImportState();
   roundsData = Array.isArray(response.rounds) ? response.rounds : [];
   currentFrameIndex = 0;
   updateReplayTitle();
@@ -429,6 +430,7 @@ function applyRoundResponseFrameState(round, response) {
 function handleRoundLoadSuccess(round, response) {
   const sourceLabel = getRoundSourceLabel(response.source);
   applyRoundResponseFrameState(round, response);
+  renderPlaybookRoundGrenadeCandidates(round);
   showReplayView();
 
   if (!framesData.length) {
@@ -476,6 +478,143 @@ function finishRoundLoad() {
   isRoundLoading = false;
   setRoundButtonsDisabled(false);
   syncPlayToggleButtonState();
+}
+
+function getPlaybookGrenadeCandidateKey(candidate = {}) {
+  return [
+    candidate.sourceDemoChecksum || '',
+    candidate.sourceRoundNumber || 0,
+    candidate.sourceEntityId || '',
+  ].join(':');
+}
+
+function setPlaybookRoundGrenadeStatus(message) {
+  if (playbookRoundGrenadeStatusElement) {
+    playbookRoundGrenadeStatusElement.innerText = message;
+  }
+}
+
+function updatePlaybookGrenadeImportButtonState() {
+  if (!btnPlaybookImportGrenades) {
+    return;
+  }
+  btnPlaybookImportGrenades.disabled = playbookRoundGrenadeSelection.size === 0;
+}
+
+function resetPlaybookRoundGrenadeImportState(message = '加载回合后可查看投掷物候选。') {
+  playbookRoundGrenadeCandidates = [];
+  playbookRoundGrenadeSelection = new Set();
+  if (playbookRoundGrenadeCandidatesElement) {
+    playbookRoundGrenadeCandidatesElement.innerHTML = '';
+  }
+  setPlaybookRoundGrenadeStatus(message);
+  updatePlaybookGrenadeImportButtonState();
+}
+
+function renderPlaybookRoundGrenadeCandidates(round = null) {
+  if (!playbookRoundGrenadeCandidatesElement) {
+    return;
+  }
+
+  if (typeof buildPlaybookGrenadeCandidates !== 'function') {
+    resetPlaybookRoundGrenadeImportState('投掷物候选工具未加载。');
+    return;
+  }
+
+  playbookRoundGrenadeCandidates = buildPlaybookGrenadeCandidates(framesData, {
+    sourceDemoChecksum: currentDemoChecksum,
+    sourceRoundNumber: round?.number || 0,
+    mapId: currentMapName,
+  });
+  playbookRoundGrenadeSelection = new Set();
+  playbookRoundGrenadeCandidatesElement.innerHTML = '';
+
+  if (playbookRoundGrenadeCandidates.length === 0) {
+    setPlaybookRoundGrenadeStatus('当前回合没有可导入投掷物。');
+    updatePlaybookGrenadeImportButtonState();
+    return;
+  }
+
+  setPlaybookRoundGrenadeStatus(`发现 ${playbookRoundGrenadeCandidates.length} 个投掷物候选，请勾选后导入。`);
+  playbookRoundGrenadeCandidates.forEach((candidate) => {
+    const key = getPlaybookGrenadeCandidateKey(candidate);
+    const row = document.createElement('label');
+    row.className = 'playbook-round-grenade-candidate';
+    row.innerHTML = `
+      <input type="checkbox" data-playbook-grenade-key="${escapeHtml(key)}">
+      <span class="playbook-round-grenade-copy">
+        <span class="playbook-round-grenade-title">${escapeHtml(candidate.title)}</span>
+        <span class="playbook-round-grenade-meta">${escapeHtml(`${candidate.side} ${candidate.grenadeType} · ${candidate.throwerName || 'unknown'} · ticks ${candidate.throwTick}-${candidate.detonateTick}`)}</span>
+      </span>
+    `;
+    playbookRoundGrenadeCandidatesElement.appendChild(row);
+  });
+  updatePlaybookGrenadeImportButtonState();
+}
+
+async function importSelectedPlaybookGrenades() {
+  const selectedCandidates = playbookRoundGrenadeCandidates.filter((candidate) => (
+    playbookRoundGrenadeSelection.has(getPlaybookGrenadeCandidateKey(candidate))
+  ));
+
+  if (selectedCandidates.length === 0) {
+    setPlaybookRoundGrenadeStatus('请先选择要导入的投掷物。');
+    updatePlaybookGrenadeImportButtonState();
+    return;
+  }
+
+  btnPlaybookImportGrenades.disabled = true;
+  setPlaybookRoundGrenadeStatus(`正在导入 ${selectedCandidates.length} 个投掷物...`);
+
+  try {
+    const response = await ipcRenderer.invoke('playbook-import-selected-grenades', {
+      candidates: selectedCandidates,
+    });
+    if (response?.status !== 'success') {
+      throw new Error(response?.message || '导入失败');
+    }
+
+    setPlaybookRoundGrenadeStatus(
+      `导入完成：新增 ${response.insertedGrenades || 0}，已存在 ${response.existingGrenades || 0}，跳过 ${response.skippedGrenades || 0}。`,
+    );
+    playbookRoundGrenadeSelection = new Set();
+    const inputs = playbookRoundGrenadeCandidatesElement.querySelectorAll('input[type="checkbox"]');
+    inputs.forEach((input) => {
+      input.checked = false;
+    });
+    if (typeof loadPlaybookState === 'function') {
+      await loadPlaybookState();
+    }
+  } catch (error) {
+    setPlaybookRoundGrenadeStatus(`导入失败：${error.message}`);
+  } finally {
+    updatePlaybookGrenadeImportButtonState();
+  }
+}
+
+if (playbookRoundGrenadeCandidatesElement) {
+  playbookRoundGrenadeCandidatesElement.addEventListener('change', (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement)) {
+      return;
+    }
+    const key = target.getAttribute('data-playbook-grenade-key');
+    if (!key) {
+      return;
+    }
+    if (target.checked) {
+      playbookRoundGrenadeSelection.add(key);
+    } else {
+      playbookRoundGrenadeSelection.delete(key);
+    }
+    updatePlaybookGrenadeImportButtonState();
+  });
+}
+
+if (btnPlaybookImportGrenades) {
+  btnPlaybookImportGrenades.addEventListener('click', () => {
+    importSelectedPlaybookGrenades();
+  });
 }
 
 async function requestRoundPlayback(round, frameStep) {

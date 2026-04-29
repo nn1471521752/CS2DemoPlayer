@@ -30,18 +30,21 @@ assert.deepStrictEqual(
 
 const resultsPageHtml = `
   <div class="results-holder">
+    <div class="result-con" data-zonedgrouping-entry-unix="1776294986000">
     <a href="/matches/2391755/nrg-vs-b8-blast-open-rotterdam-2026" class="a-reset">
       <div class="result">
         <table>
           <tr>
             <td class="team-cell">
               <div class="line-align team1">
+                <img alt="NRG" class="team-logo" data-cookieblock-src="https://img-cdn.hltv.org/teamlogo/nrg.png">
                 <div class="team team-won">NRG</div>
               </div>
             </td>
             <td class="result-score"><span class="score-won">2</span> - <span class="score-lost">0</span></td>
             <td class="team-cell">
               <div class="line-align team2">
+                <img alt="B8" class="team-logo" data-cookieblock-src="https://img-cdn.hltv.org/teamlogo/b8.png">
                 <div class="team">B8</div>
               </div>
             </td>
@@ -51,18 +54,26 @@ const resultsPageHtml = `
             <td class="star-cell">
               <div class="map-and-stars">
                 <div class="map map-text">bo3</div>
+                <div class="stars">
+                  <i class="fa fa-star star"></i>
+                  <i class="fa fa-star star"></i>
+                  <i class="fa fa-star star"></i>
+                </div>
               </div>
             </td>
           </tr>
         </table>
       </div>
     </a>
+    </div>
+    <div class="result-con" data-zonedgrouping-entry-unix="1776206077000">
     <a href="/matches/2390818/vitality-vs-9z-blast-open-rotterdam-2026" class="a-reset">
       <div class="result">
         <table>
           <tr>
             <td class="team-cell">
               <div class="line-align team1">
+                <img alt="Vitality" class="team-logo" data-cookieblock-src="https://img-cdn.hltv.org/teamlogo/vitality.png">
                 <div class="team team-won">Vitality</div>
               </div>
             </td>
@@ -78,6 +89,7 @@ const resultsPageHtml = `
         </table>
       </div>
     </a>
+    </div>
   </div>
 `;
 
@@ -87,18 +99,24 @@ assert.deepStrictEqual(
     {
       matchId: '2391755',
       matchUrl: 'https://www.hltv.org/matches/2391755/nrg-vs-b8-blast-open-rotterdam-2026',
+      matchTimestampMs: 1776294986000,
       team1Name: 'NRG',
       team2Name: 'B8',
+      team1LogoUrl: 'https://img-cdn.hltv.org/teamlogo/nrg.png',
+      team2LogoUrl: 'https://img-cdn.hltv.org/teamlogo/b8.png',
       team1Score: 2,
       team2Score: 0,
       eventName: 'BLAST Open Rotterdam 2026',
       matchFormat: 'bo3',
+      hltvStarRating: 3,
     },
     {
       matchId: '2390818',
       matchUrl: 'https://www.hltv.org/matches/2390818/vitality-vs-9z-blast-open-rotterdam-2026',
+      matchTimestampMs: 1776206077000,
       team1Name: 'Vitality',
       team2Name: '9z',
+      team1LogoUrl: 'https://img-cdn.hltv.org/teamlogo/vitality.png',
       eventName: 'BLAST Open Rotterdam 2026',
     },
   ],
@@ -115,6 +133,7 @@ assert.deepStrictEqual(
     team2Score: ' 1 ',
     eventName: ' BLAST Open Lisbon 2026 ',
     matchFormat: ' bo3 ',
+    hltvStarRating: '2',
   }),
   {
     matchId: '2381234',
@@ -125,6 +144,7 @@ assert.deepStrictEqual(
     team2Score: 1,
     eventName: 'BLAST Open Lisbon 2026',
     matchFormat: 'bo3',
+    hltvStarRating: 2,
   },
   'should trim and normalize minimal match metadata',
 );

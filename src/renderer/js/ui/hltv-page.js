@@ -4,25 +4,33 @@
   let hltvPageStatus = 'idle';
   let hltvPageStatusDetail = '';
   let hltvDiscoveryState = buildEmptyDiscoveryState();
-  let hltvDiscoveryFilters = normalizeDiscoveryFilters();
-  let hltvVisibleBrowseMatchCount = 0;
+  let hltvFilters = {
+    searchText: '',
+    demoOnly: false,
+  };
+  let hltvVisibleMatchCount = 0;
   let isRevealingHltvMatches = false;
-  let activeInspirationMatchId = '';
+  let hltvLoadingPollTimer = null;
+
+  function escapeHtml(value) {
+    return String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
 
   function buildEmptyDiscoveryState() {
     return {
       status: 'idle',
       detail: '',
       updatedAt: '',
+      cacheSummary: null,
       summary: {
         totalMatches: 0,
-        recommendedMatches: 0,
-        queuedMatches: 0,
-        cards: 0,
       },
       matches: [],
-      queue: [],
-      cards: [],
     };
   }
 
@@ -42,22 +50,37 @@
       : [];
   }
 
-  function normalizeRecommendationReasons(reasons) {
-    return Array.isArray(reasons)
-      ? reasons.map((value) => String(value || '').trim()).filter(Boolean)
-      : [];
-  }
+  function buildScoreTokens(matchItem = {}) {
+    const team1Score = normalizeIntegerValue(matchItem.team1Score);
+    const team2Score = normalizeIntegerValue(matchItem.team2Score);
+    if (team1Score === null || team2Score === null) {
+      return {
+        left: '-',
+        right: '-',
+        winner: '',
+      };
+    }
 
-  function normalizeSignals(signals = {}) {
+    if (team1Score > team2Score) {
+      return {
+        left: String(team1Score),
+        right: String(team2Score),
+        winner: 'left',
+      };
+    }
+
+    if (team2Score > team1Score) {
+      return {
+        left: String(team1Score),
+        right: String(team2Score),
+        winner: 'right',
+      };
+    }
+
     return {
-      hasDemo: Boolean(signals.hasDemo),
-      hasKnownScore: Boolean(signals.hasKnownScore),
-      isCloseSeries: Boolean(signals.isCloseSeries),
-      isSweep: Boolean(signals.isSweep),
-      eventTierHint: normalizeText(signals.eventTierHint, 'standard'),
-      eventSignalLabels: Array.isArray(signals.eventSignalLabels)
-        ? signals.eventSignalLabels.map((value) => String(value || '').trim()).filter(Boolean)
-        : [],
+      left: String(team1Score),
+      right: String(team2Score),
+      winner: '',
     };
   }
 
@@ -72,147 +95,36 @@
       eventName: normalizeText(matchItem.eventName, 'Unknown event'),
       matchFormat: normalizeText(matchItem.matchFormat),
       matchTimeLabel: normalizeText(matchItem.matchTimeLabel),
+      matchTimestampMs: Number.isFinite(Number(matchItem.matchTimestampMs)) ? Number(matchItem.matchTimestampMs) : null,
+      hltvStarRating: Number.isFinite(Number(matchItem.hltvStarRating)) ? Math.max(0, Math.min(5, Number(matchItem.hltvStarRating))) : 0,
       hasDemo: typeof matchItem.hasDemo === 'boolean' ? matchItem.hasDemo : null,
       downloadedDemoPath: normalizeText(matchItem.downloadedDemoPath),
       downloadedFileSize: Number(matchItem.downloadedFileSize) || 0,
       playableDemoPaths: normalizePlayableDemoPaths(matchItem.playableDemoPaths),
       isDownloading: Boolean(matchItem.isDownloading),
-      recommendationScore: Number(matchItem.recommendationScore) || 0,
-      recommendationReasons: normalizeRecommendationReasons(matchItem.recommendationReasons),
-      signals: normalizeSignals(matchItem.signals),
-      isQueued: Boolean(matchItem.isQueued),
-      hasCard: Boolean(matchItem.hasCard),
-    };
-  }
-
-  function normalizeQueueItem(queueItem = {}) {
-    return {
-      matchId: normalizeText(queueItem.matchId),
-      matchUrl: normalizeText(queueItem.matchUrl),
-      team1Name: normalizeText(queueItem.team1Name, 'Unknown'),
-      team2Name: normalizeText(queueItem.team2Name, 'Unknown'),
-      eventName: normalizeText(queueItem.eventName, 'Unknown event'),
-      queueReason: normalizeText(queueItem.queueReason, 'Saved from HLTV discovery'),
-      status: normalizeText(queueItem.status, 'queued'),
-      createdAt: normalizeText(queueItem.createdAt),
-      updatedAt: normalizeText(queueItem.updatedAt),
-    };
-  }
-
-  function normalizeCardItem(cardItem = {}) {
-    return {
-      matchId: normalizeText(cardItem.matchId),
-      matchUrl: normalizeText(cardItem.matchUrl),
-      team1Name: normalizeText(cardItem.team1Name, 'Unknown'),
-      team2Name: normalizeText(cardItem.team2Name, 'Unknown'),
-      eventName: normalizeText(cardItem.eventName, 'Unknown event'),
-      title: normalizeText(cardItem.title),
-      note: normalizeText(cardItem.note),
-      createdAt: normalizeText(cardItem.createdAt),
-      updatedAt: normalizeText(cardItem.updatedAt),
-    };
-  }
-
-  function normalizeSummary(summary = {}, state = {}) {
-    return {
-      totalMatches: Number(summary.totalMatches) || (Array.isArray(state.matches) ? state.matches.length : 0),
-      recommendedMatches: Number(summary.recommendedMatches) || 0,
-      queuedMatches: Number(summary.queuedMatches) || (Array.isArray(state.queue) ? state.queue.length : 0),
-      cards: Number(summary.cards) || (Array.isArray(state.cards) ? state.cards.length : 0),
     };
   }
 
   function normalizeHltvDiscoveryState(state = {}) {
-    const normalizedState = {
+    const normalizedMatches = Array.isArray(state.matches)
+      ? state.matches.map((matchItem) => normalizeHltvMatchItem(matchItem))
+      : [];
+
+    return {
       status: normalizeHltvPageStatus(state.status),
       detail: normalizeText(state.detail),
       updatedAt: normalizeText(state.updatedAt),
-      matches: Array.isArray(state.matches) ? state.matches.map((matchItem) => normalizeHltvMatchItem(matchItem)) : [],
-      queue: Array.isArray(state.queue) ? state.queue.map((queueItem) => normalizeQueueItem(queueItem)) : [],
-      cards: Array.isArray(state.cards) ? state.cards.map((cardItem) => normalizeCardItem(cardItem)) : [],
+      cacheSummary: state.cacheSummary && typeof state.cacheSummary === 'object' ? state.cacheSummary : null,
+      summary: {
+        totalMatches: Number(state?.summary?.totalMatches) || normalizedMatches.length,
+      },
+      matches: normalizedMatches,
     };
-
-    normalizedState.summary = normalizeSummary(state.summary, normalizedState);
-    return normalizedState;
   }
 
-  function getHltvMatchKey(matchItem = {}) {
-    return normalizeText(matchItem.matchId);
-  }
-
-  function getDiscoveryMatchMap() {
-    return new Map(hltvDiscoveryState.matches.map((matchItem) => [getHltvMatchKey(matchItem), matchItem]));
-  }
-
-  function getQueueItemMap() {
-    return new Map(hltvDiscoveryState.queue.map((queueItem) => [normalizeText(queueItem.matchId), queueItem]));
-  }
-
-  function getCardItemMap() {
-    return new Map(hltvDiscoveryState.cards.map((cardItem) => [normalizeText(cardItem.matchId), cardItem]));
-  }
-
-  function findDiscoverySource(matchId) {
+  function getMatchById(matchId) {
     const normalizedMatchId = normalizeText(matchId);
-    if (!normalizedMatchId) {
-      return null;
-    }
-
-    const match = getDiscoveryMatchMap().get(normalizedMatchId) || null;
-    const queue = getQueueItemMap().get(normalizedMatchId) || null;
-    const card = getCardItemMap().get(normalizedMatchId) || null;
-
-    if (!match && !queue && !card) {
-      return null;
-    }
-
-    return normalizeHltvMatchItem({
-      matchId: normalizedMatchId,
-      matchUrl: match?.matchUrl || queue?.matchUrl || card?.matchUrl,
-      team1Name: match?.team1Name || queue?.team1Name || card?.team1Name,
-      team2Name: match?.team2Name || queue?.team2Name || card?.team2Name,
-      team1Score: match?.team1Score,
-      team2Score: match?.team2Score,
-      eventName: match?.eventName || queue?.eventName || card?.eventName,
-      matchFormat: match?.matchFormat,
-      matchTimeLabel: match?.matchTimeLabel,
-      hasDemo: match?.hasDemo,
-      downloadedDemoPath: match?.downloadedDemoPath,
-      downloadedFileSize: match?.downloadedFileSize,
-      playableDemoPaths: match?.playableDemoPaths,
-      recommendationScore: match?.recommendationScore,
-      recommendationReasons: match?.recommendationReasons,
-      signals: match?.signals,
-      isQueued: Boolean(queue),
-      hasCard: Boolean(card),
-    });
-  }
-
-  function getSelectedCardItem() {
-    return getCardItemMap().get(activeInspirationMatchId) || null;
-  }
-
-  function getSelectedDiscoverySource() {
-    return findDiscoverySource(activeInspirationMatchId);
-  }
-
-  function ensureActiveInspirationSelection() {
-    if (activeInspirationMatchId && findDiscoverySource(activeInspirationMatchId)) {
-      return;
-    }
-
-    const firstCard = hltvDiscoveryState.cards[0];
-    activeInspirationMatchId = firstCard ? normalizeText(firstCard.matchId) : '';
-  }
-
-  function setActiveInspirationMatch(matchId) {
-    const normalizedMatchId = normalizeText(matchId);
-    activeInspirationMatchId = normalizedMatchId && findDiscoverySource(normalizedMatchId)
-      ? normalizedMatchId
-      : '';
-    renderHltvResults();
-    renderHltvQueue();
-    renderHltvCards();
+    return hltvDiscoveryState.matches.find((matchItem) => matchItem.matchId === normalizedMatchId) || null;
   }
 
   function formatHltvStatusText() {
@@ -222,10 +134,6 @@
 
     if (hltvPageStatus === 'loading') {
       return '刷新中...';
-    }
-
-    if (hltvPageStatus === 'success') {
-      return '';
     }
 
     if (hltvPageStatus === 'error') {
@@ -246,9 +154,7 @@
 
     if (btnHltvRefresh) {
       btnHltvRefresh.disabled = hltvPageStatus === 'loading';
-      btnHltvRefresh.innerText = hltvPageStatus === 'loading'
-        ? '刷新中...'
-        : '刷新';
+      btnHltvRefresh.innerText = hltvPageStatus === 'loading' ? '刷新中...' : '刷新';
     }
   }
 
@@ -272,9 +178,7 @@
     if (state.detail) {
       return state.detail;
     }
-
-    const summary = state.summary || {};
-    return `${summary.totalMatches || 0} 场，${summary.recommendedMatches || 0} 场推荐`;
+    return `${state.summary.totalMatches || 0} 场比赛`;
   }
 
   function formatFileSizeLabel(fileSize) {
@@ -293,24 +197,30 @@
 
   function formatTimestampLabel(value) {
     if (!value) {
-      return 'Unknown time';
+      return '-';
     }
 
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) {
-      return 'Unknown time';
+      return '-';
     }
 
     return date.toLocaleString();
   }
 
   function buildHltvMatchMetaText(matchItem) {
-    const parts = [matchItem.eventName];
+    const parts = [
+      `Match ${matchItem.matchId}`,
+      matchItem.eventName,
+    ];
     if (matchItem.matchFormat) {
       parts.push(matchItem.matchFormat.toUpperCase());
     }
     if (matchItem.matchTimeLabel) {
       parts.push(matchItem.matchTimeLabel);
+    }
+    if (matchItem.hltvStarRating > 0) {
+      parts.push(`${matchItem.hltvStarRating}★`);
     }
     if (matchItem.hasDemo === true) {
       parts.push('Demo available');
@@ -338,21 +248,10 @@
   }
 
   function createPlaceholder(message) {
-    if (typeof createDemoLibraryPlaceholder === 'function') {
-      return createDemoLibraryPlaceholder(message);
-    }
-
     const node = document.createElement('div');
     node.className = 'demo-empty';
     node.innerText = message;
     return node;
-  }
-
-  function createBadge(text, variant = '') {
-    const badge = document.createElement('span');
-    badge.className = variant ? `hltv-badge ${variant}` : 'hltv-badge';
-    badge.innerText = text;
-    return badge;
   }
 
   function createActionButton({
@@ -380,7 +279,7 @@
 
   function createHltvMatchRow(matchItem) {
     const row = document.createElement('article');
-    row.className = 'hltv-results-row';
+    row.className = 'hltv-results-row hltv-result-line';
 
     const rowMain = document.createElement('div');
     rowMain.className = 'hltv-results-row-main';
@@ -392,9 +291,14 @@
     team1.className = 'hltv-results-team is-left';
     team1.innerText = matchItem.team1Name;
 
+    const scoreTokens = buildHltvScoreDisplayModel(matchItem);
     const score = document.createElement('div');
     score.className = 'hltv-results-score';
-    score.innerText = formatHltvScoreLabel(matchItem);
+    score.innerHTML = `
+      <span class="${escapeHtml(scoreTokens.leftClassName)}">${escapeHtml(scoreTokens.left)}</span>
+      <span class="hltv-results-score-colon">:</span>
+      <span class="${escapeHtml(scoreTokens.rightClassName)}">${escapeHtml(scoreTokens.right)}</span>
+    `;
 
     const team2 = document.createElement('div');
     team2.className = 'hltv-results-team is-right';
@@ -403,10 +307,6 @@
     versus.appendChild(team1);
     versus.appendChild(score);
     versus.appendChild(team2);
-
-    const meta = document.createElement('div');
-    meta.className = 'hltv-results-meta';
-    meta.innerText = buildHltvMatchMetaText(matchItem);
 
     const actionWrap = document.createElement('div');
     actionWrap.className = 'hltv-results-actions';
@@ -419,35 +319,16 @@
       disabled: matchItem.isDownloading,
     });
 
-    const queueAction = createActionButton({
-      label: matchItem.isQueued ? 'Remove From Queue' : 'Add To Queue',
-      action: matchItem.isQueued ? 'remove-queued-match' : 'queue-match',
-      matchId: matchItem.matchId,
-      disabled: matchItem.isDownloading,
-    });
-
-    const cardAction = createActionButton({
-      label: matchItem.hasCard ? 'Edit Card' : 'New Card',
-      action: 'select-card-match',
-      matchId: matchItem.matchId,
-    });
-
     actionWrap.appendChild(primaryAction);
-    actionWrap.appendChild(queueAction);
-    actionWrap.appendChild(cardAction);
 
     rowMain.appendChild(versus);
-    rowMain.appendChild(meta);
     rowMain.appendChild(actionWrap);
     row.appendChild(rowMain);
 
-    const badges = document.createElement('div');
-    badges.className = 'hltv-match-badges';
-    badges.appendChild(createBadge(`Score ${matchItem.recommendationScore}`, 'is-score'));
-    matchItem.recommendationReasons.slice(0, 4).forEach((reason) => {
-      badges.appendChild(createBadge(reason));
-    });
-    row.appendChild(badges);
+    const meta = document.createElement('div');
+    meta.className = 'hltv-results-meta';
+    meta.innerText = buildHltvMatchMetaText(matchItem);
+    row.appendChild(meta);
 
     if (matchItem.playableDemoPaths.length > 0) {
       const demosWrap = document.createElement('div');
@@ -464,6 +345,7 @@
         const demoAction = createActionButton({
           label: 'Analyze',
           action: 'open-demo',
+          matchId: matchItem.matchId,
           demoPath,
           className: 'hltv-demo-file-action',
         });
@@ -479,28 +361,41 @@
     return row;
   }
 
-  function buildFilteredDiscoveryLists() {
-    const filteredMatches = filterDiscoveryMatches(hltvDiscoveryState.matches, hltvDiscoveryFilters);
-    const split = splitRecommendedMatches(filteredMatches);
-    return {
-      filteredMatches,
-      recommendedMatches: split.recommendedMatches,
-      browseMatches: split.browseMatches,
-    };
+  function buildFilteredMatches() {
+    const searchNeedle = normalizeText(hltvFilters.searchText).toLowerCase();
+    return hltvDiscoveryState.matches.filter((match) => {
+      if (hltvFilters.demoOnly && !hasKnownDemo(match)) {
+        return false;
+      }
+
+      if (!searchNeedle) {
+        return true;
+      }
+
+      const haystack = [
+        match.matchId,
+        match.team1Name,
+        match.team2Name,
+        match.eventName,
+        match.matchFormat,
+      ].map((value) => normalizeText(value).toLowerCase()).filter(Boolean).join(' ');
+
+      return haystack.includes(searchNeedle);
+    });
   }
 
-  function syncVisibleBrowseMatchCount(reset = false) {
-    const { browseMatches } = buildFilteredDiscoveryLists();
-    const initialVisibleCount = getInitialVisibleMatchCount(browseMatches.length);
+  function syncVisibleMatchCount(reset = false) {
+    const filteredMatches = buildFilteredMatches();
+    const initialVisibleCount = getInitialVisibleMatchCount(filteredMatches.length);
 
-    if (reset || hltvVisibleBrowseMatchCount <= 0) {
-      hltvVisibleBrowseMatchCount = initialVisibleCount;
+    if (reset || hltvVisibleMatchCount <= 0) {
+      hltvVisibleMatchCount = initialVisibleCount;
       return;
     }
 
-    hltvVisibleBrowseMatchCount = Math.max(
+    hltvVisibleMatchCount = Math.max(
       initialVisibleCount,
-      Math.min(hltvVisibleBrowseMatchCount, browseMatches.length),
+      Math.min(hltvVisibleMatchCount, filteredMatches.length),
     );
   }
 
@@ -509,68 +404,67 @@
       return;
     }
 
-    const summary = hltvDiscoveryState.summary || {};
+    const filteredMatches = buildFilteredMatches();
     const cards = [
-      ['Matches', summary.totalMatches],
-      ['Recommended', summary.recommendedMatches],
-      ['Queued', summary.queuedMatches],
-      ['Cards', summary.cards],
+      ['Matches', String(hltvDiscoveryState.summary.totalMatches || 0)],
+      ['Visible', String(filteredMatches.length)],
+      ['Updated', formatTimestampLabel(hltvDiscoveryState.updatedAt)],
     ];
 
     hltvDiscoverySummaryElement.innerHTML = cards.map(([label, value]) => `
-      <div class="summary-card">
+      <div class="summary-card summary-card-compact">
         <span class="summary-card-label">${escapeHtml(label)}</span>
-        <span class="summary-card-value">${escapeHtml(String(value || 0))}</span>
+        <span class="summary-card-value ${label === 'Updated' ? 'is-meta' : ''}">${escapeHtml(value)}</span>
       </div>
     `).join('');
   }
 
   function renderHltvResults() {
-    if (!hltvRecommendedListElement || !hltvMatchListElement) {
+    if (!hltvMatchListElement) {
+      console.warn('[HLTV Renderer] render skipped: hltvMatchListElement missing');
       return;
     }
 
-    const { filteredMatches, recommendedMatches, browseMatches } = buildFilteredDiscoveryLists();
-    syncVisibleBrowseMatchCount(false);
-
-    if (hltvRecommendedSummaryElement) {
-      hltvRecommendedSummaryElement.innerText = '';
-    }
+    const filteredMatches = buildFilteredMatches();
+    syncVisibleMatchCount(false);
+    console.log(
+      `[HLTV Renderer] render results total=${hltvDiscoveryState.summary.totalMatches || 0} filtered=${filteredMatches.length} visible=${hltvVisibleMatchCount}`,
+    );
 
     if (hltvBrowseSummaryElement) {
-      hltvBrowseSummaryElement.innerText = '';
-    }
-
-    hltvRecommendedListElement.innerHTML = '';
-    if (recommendedMatches.length === 0) {
-      hltvRecommendedListElement.appendChild(createPlaceholder(
-        getRecommendedEmptyText({
-          totalMatches: hltvDiscoveryState.matches.length,
-          filteredMatches: filteredMatches.length,
-        }),
-      ));
-    } else {
-      recommendedMatches.forEach((matchItem) => {
-        hltvRecommendedListElement.appendChild(createHltvMatchRow(matchItem));
-      });
+      hltvBrowseSummaryElement.innerText = `${filteredMatches.length} / ${hltvDiscoveryState.summary.totalMatches || 0} 场`;
     }
 
     hltvMatchListElement.innerHTML = '';
-    if (browseMatches.length === 0) {
-      hltvMatchListElement.appendChild(createPlaceholder(
-        getBrowseEmptyText({
-          totalMatches: hltvDiscoveryState.matches.length,
-          filteredMatches: filteredMatches.length,
-        }),
-      ));
+    if (filteredMatches.length === 0) {
+      const message = (hltvDiscoveryState.summary.totalMatches || 0) <= 0
+        ? '刷新后查看比赛。'
+        : '当前筛选下无结果。';
+      hltvMatchListElement.appendChild(createPlaceholder(message));
       return;
     }
 
-    browseMatches.slice(0, hltvVisibleBrowseMatchCount).forEach((matchItem) => {
-      hltvMatchListElement.appendChild(createHltvMatchRow(matchItem));
+    const groupedMatches = groupMatchesByDateLabel(filteredMatches.slice(0, hltvVisibleMatchCount));
+    groupedMatches.forEach((group) => {
+      const groupNode = document.createElement('section');
+      groupNode.className = 'hltv-results-group';
+
+      const heading = document.createElement('div');
+      heading.className = 'hltv-results-group-heading';
+      heading.innerText = group.label;
+      groupNode.appendChild(heading);
+
+      const lines = document.createElement('div');
+      lines.className = 'hltv-results-group-list';
+      group.matches.forEach((matchItem) => {
+        lines.appendChild(createHltvMatchRow(matchItem));
+      });
+
+      groupNode.appendChild(lines);
+      hltvMatchListElement.appendChild(groupNode);
     });
 
-    const footerText = getHltvBatchFooterText(hltvVisibleBrowseMatchCount, browseMatches.length);
+    const footerText = getHltvBatchFooterText(hltvVisibleMatchCount, filteredMatches.length);
     if (footerText) {
       const footer = document.createElement('div');
       footer.className = 'hltv-results-footer';
@@ -579,165 +473,42 @@
     }
   }
 
-  function buildQueueViewItems() {
-    return hltvDiscoveryState.queue.map((queueItem) => ({
-      queueItem,
-      source: findDiscoverySource(queueItem.matchId),
-    }));
-  }
-
-  function renderHltvQueue() {
-    if (!hltvQueueSummaryElement || !hltvQueueListElement) {
-      return;
-    }
-
-    const queueItems = buildQueueViewItems();
-    hltvQueueSummaryElement.innerText = buildQueueSummaryText(hltvDiscoveryState.queue);
-    hltvQueueListElement.innerHTML = '';
-
-    if (queueItems.length === 0) {
-      hltvQueueListElement.appendChild(createPlaceholder('Add a match from Recommended or Browse to start the queue.'));
-      return;
-    }
-
-    queueItems.forEach(({ queueItem, source }) => {
-      const row = document.createElement('article');
-      row.className = 'hltv-queue-row';
-
-      const title = document.createElement('div');
-      title.className = 'hltv-queue-title';
-      title.innerText = `${queueItem.team1Name} vs ${queueItem.team2Name}`;
-
-      const meta = document.createElement('div');
-      meta.className = 'hltv-queue-meta';
-      const metaParts = [queueItem.eventName, queueItem.queueReason];
-      if (source?.playableDemoPaths?.length > 0) {
-        metaParts.push(`${source.playableDemoPaths.length} demos ready`);
-      }
-      metaParts.push(`Updated ${formatTimestampLabel(queueItem.updatedAt)}`);
-      meta.innerText = metaParts.filter(Boolean).join(' | ');
-
-      const actions = document.createElement('div');
-      actions.className = 'hltv-queue-actions';
-
-      if (source?.playableDemoPaths?.length > 0) {
-        actions.appendChild(createActionButton({
-          label: 'Analyze Demo',
-          action: 'open-first-demo',
-          matchId: queueItem.matchId,
-          className: 'hltv-match-action',
-        }));
-      } else {
-        actions.appendChild(createActionButton({
-          label: 'Download Demo',
-          action: 'download-match',
-          matchId: queueItem.matchId,
-          className: 'hltv-match-action',
-        }));
-      }
-
-      actions.appendChild(createActionButton({
-        label: 'Edit Card',
-        action: 'select-card-match',
-        matchId: queueItem.matchId,
-      }));
-
-      actions.appendChild(createActionButton({
-        label: 'Remove',
-        action: 'remove-queued-match',
-        matchId: queueItem.matchId,
-      }));
-
-      row.appendChild(title);
-      row.appendChild(meta);
-      row.appendChild(actions);
-      hltvQueueListElement.appendChild(row);
-    });
-  }
-
-  function renderHltvCards() {
-    if (!hltvCardSummaryElement || !hltvCardListElement || !hltvCardMatchLabelElement || !hltvCardTitleInput || !hltvCardNoteInput) {
-      return;
-    }
-
-    const selectedSource = getSelectedDiscoverySource();
-    const selectedCard = getSelectedCardItem();
-
-    hltvCardSummaryElement.innerText = buildCardSummaryText(hltvDiscoveryState.cards);
-    hltvCardMatchLabelElement.innerText = selectedSource
-      ? `Selected match: ${selectedSource.team1Name} vs ${selectedSource.team2Name}`
-      : 'Select a match to save a card.';
-
-    hltvCardTitleInput.value = selectedCard?.title || '';
-    hltvCardNoteInput.value = selectedCard?.note || '';
-
-    if (btnHltvCardSave) {
-      btnHltvCardSave.disabled = !selectedSource;
-    }
-    if (btnHltvCardDelete) {
-      btnHltvCardDelete.disabled = !selectedCard;
-    }
-    if (btnHltvCardClear) {
-      btnHltvCardClear.disabled = !activeInspirationMatchId;
-    }
-
-    hltvCardListElement.innerHTML = '';
-    if (hltvDiscoveryState.cards.length === 0) {
-      hltvCardListElement.appendChild(createPlaceholder('Select a match and save why it is worth reviewing.'));
-      return;
-    }
-
-    hltvDiscoveryState.cards.forEach((cardItem) => {
-      const source = findDiscoverySource(cardItem.matchId);
-      const row = document.createElement('article');
-      row.className = `hltv-card-list-row${cardItem.matchId === activeInspirationMatchId ? ' is-active' : ''}`;
-      row.dataset.action = 'select-card-match';
-      row.dataset.matchId = cardItem.matchId;
-
-      const title = document.createElement('div');
-      title.className = 'hltv-card-list-title';
-      title.innerText = cardItem.title || `${source?.team1Name || cardItem.team1Name} vs ${source?.team2Name || cardItem.team2Name}`;
-
-      const meta = document.createElement('div');
-      meta.className = 'hltv-card-list-meta';
-      meta.innerText = [
-        source?.eventName || cardItem.eventName,
-        `Updated ${formatTimestampLabel(cardItem.updatedAt)}`,
-      ].filter(Boolean).join(' | ');
-
-      const note = document.createElement('div');
-      note.className = 'hltv-card-list-note';
-      note.innerText = cardItem.note || 'No note yet.';
-
-      const actions = document.createElement('div');
-      actions.className = 'hltv-card-list-actions';
-      actions.appendChild(createActionButton({
-        label: 'Delete',
-        action: 'delete-card',
-        matchId: cardItem.matchId,
-      }));
-
-      row.appendChild(title);
-      row.appendChild(meta);
-      row.appendChild(note);
-      row.appendChild(actions);
-      hltvCardListElement.appendChild(row);
-    });
-  }
-
   function renderHltvDiscoveryWorkspace() {
     renderHltvStatus();
     renderHltvCacheStatus();
     renderHltvDiscoverySummary();
     renderHltvResults();
-    renderHltvQueue();
-    renderHltvCards();
+  }
+
+  function clearHltvLoadingPoll() {
+    if (hltvLoadingPollTimer) {
+      clearTimeout(hltvLoadingPollTimer);
+      hltvLoadingPollTimer = null;
+    }
+  }
+
+  async function pollHltvDiscoveryWhileLoading() {
+    clearHltvLoadingPoll();
+    try {
+      const response = await ipcRenderer.invoke('hltv-get-discovery-state');
+      console.log(
+        `[HLTV Renderer] loading poll response status=${response?.status || ''} matches=${Array.isArray(response?.matches) ? response.matches.length : -1}`,
+      );
+      applyHltvDiscoveryState(response, { resetVisible: true });
+      if (normalizeHltvPageStatus(response?.status) === 'loading') {
+        hltvLoadingPollTimer = setTimeout(() => {
+          void pollHltvDiscoveryWhileLoading();
+        }, 800);
+      }
+    } catch (error) {
+      console.error('[HLTV Renderer] loading poll fatal error', error);
+      setHltvStatus('error', error.message || 'Failed to poll HLTV browse state.');
+    }
   }
 
   function applyHltvDiscoveryState(nextState = {}, options = {}) {
     hltvDiscoveryState = normalizeHltvDiscoveryState(nextState);
-    ensureActiveInspirationSelection();
-    syncVisibleBrowseMatchCount(Boolean(options.resetVisible));
+    syncVisibleMatchCount(Boolean(options.resetVisible));
 
     if (hltvDiscoveryState.status === 'success') {
       setHltvStatus('success', buildHltvSuccessDetail(hltvDiscoveryState));
@@ -751,7 +522,7 @@
   function updateHltvMatchItem(matchId, updater) {
     const normalizedMatchId = normalizeText(matchId);
     hltvDiscoveryState.matches = hltvDiscoveryState.matches.map((matchItem) => {
-      if (getHltvMatchKey(matchItem) !== normalizedMatchId) {
+      if (normalizeText(matchItem.matchId) !== normalizedMatchId) {
         return matchItem;
       }
       const nextValue = typeof updater === 'function' ? updater(matchItem) : matchItem;
@@ -760,46 +531,39 @@
     renderHltvDiscoveryWorkspace();
   }
 
-  function applyDiscoveryFiltersFromDom(resetVisible = true) {
-    hltvDiscoveryFilters = normalizeDiscoveryFilters({
-      searchText: hltvFilterSearchInput?.value,
-      demoOnly: hltvFilterDemoOnlyInput?.checked,
-      closeSeriesOnly: hltvFilterCloseOnlyInput?.checked,
-      featuredEventOnly: hltvFilterFeaturedOnlyInput?.checked,
-    });
-    syncVisibleBrowseMatchCount(resetVisible);
+  function applyFiltersFromDom(resetVisible = true) {
+    hltvFilters = {
+      searchText: normalizeText(hltvFilterSearchInput?.value),
+      demoOnly: Boolean(hltvFilterDemoOnlyInput?.checked),
+    };
+    syncVisibleMatchCount(resetVisible);
     renderHltvResults();
+    renderHltvDiscoverySummary();
   }
 
-  function resetDiscoveryFilters() {
+  function resetFilters() {
     if (hltvFilterSearchInput) {
       hltvFilterSearchInput.value = '';
     }
     if (hltvFilterDemoOnlyInput) {
       hltvFilterDemoOnlyInput.checked = false;
     }
-    if (hltvFilterCloseOnlyInput) {
-      hltvFilterCloseOnlyInput.checked = false;
-    }
-    if (hltvFilterFeaturedOnlyInput) {
-      hltvFilterFeaturedOnlyInput.checked = false;
-    }
-    applyDiscoveryFiltersFromDom(true);
+    applyFiltersFromDom(true);
   }
 
   function revealMoreBrowseMatches() {
-    const { browseMatches } = buildFilteredDiscoveryLists();
+    const filteredMatches = buildFilteredMatches();
     if (
       isRevealingHltvMatches
-      || !hasMoreVisibleMatches(hltvVisibleBrowseMatchCount, browseMatches.length)
+      || !hasMoreVisibleMatches(hltvVisibleMatchCount, filteredMatches.length)
     ) {
       return;
     }
 
     isRevealingHltvMatches = true;
-    hltvVisibleBrowseMatchCount = revealVisibleMatchCount(
-      hltvVisibleBrowseMatchCount,
-      browseMatches.length,
+    hltvVisibleMatchCount = revealVisibleMatchCount(
+      hltvVisibleMatchCount,
+      filteredMatches.length,
     );
     renderHltvResults();
     isRevealingHltvMatches = false;
@@ -818,7 +582,7 @@
     }
   }
 
-  async function openDemoFromPath(demoPath) {
+  async function openDemoFromPath(demoPath, matchId = '') {
     const normalizedDemoPath = normalizeText(demoPath);
     if (!normalizedDemoPath) {
       return;
@@ -828,6 +592,7 @@
     try {
       const response = await ipcRenderer.invoke('analyze-demo-from-path', {
         demoPath: normalizedDemoPath,
+        matchId: normalizeText(matchId),
       });
 
       if (response.status !== 'success') {
@@ -852,7 +617,7 @@
   }
 
   async function downloadMatch(matchId) {
-    const source = findDiscoverySource(matchId);
+    const source = getMatchById(matchId);
     if (!source || source.isDownloading) {
       return;
     }
@@ -890,97 +655,62 @@
     }
   }
 
-  async function queueMatch(matchId) {
-    const source = findDiscoverySource(matchId);
-    if (!source) {
-      return;
-    }
-
-    const response = await ipcRenderer.invoke('hltv-queue-match', source);
-    applyHltvDiscoveryState(response);
-    setHltvStatus('success', `Queued ${source.team1Name} vs ${source.team2Name} for analysis.`);
-  }
-
-  async function removeQueuedMatch(matchId) {
-    const source = findDiscoverySource(matchId);
-    const response = await ipcRenderer.invoke('hltv-remove-queued-match', { matchId });
-    applyHltvDiscoveryState(response);
-    if (source) {
-      setHltvStatus('success', `Removed ${source.team1Name} vs ${source.team2Name} from the queue.`);
-    }
-  }
-
-  async function saveInspirationCard() {
-    const source = getSelectedDiscoverySource();
-    if (!source) {
-      return;
-    }
-
-    const title = normalizeText(hltvCardTitleInput?.value);
-    const note = normalizeText(hltvCardNoteInput?.value);
-    if (!title && !note) {
-      setHltvStatus('error', 'Add a title or note before saving a card.');
-      return;
-    }
-
-    const response = await ipcRenderer.invoke('hltv-save-inspiration-card', {
-      matchId: source.matchId,
-      matchUrl: source.matchUrl,
-      team1Name: source.team1Name,
-      team2Name: source.team2Name,
-      eventName: source.eventName,
-      title,
-      note,
-    });
-
-    applyHltvDiscoveryState(response);
-    activeInspirationMatchId = source.matchId;
-    renderHltvCards();
-    setHltvStatus('success', `Saved inspiration card for ${source.team1Name} vs ${source.team2Name}.`);
-  }
-
-  async function deleteInspirationCard(matchId = activeInspirationMatchId) {
-    const normalizedMatchId = normalizeText(matchId);
-    if (!normalizedMatchId) {
-      return;
-    }
-
-    const source = findDiscoverySource(normalizedMatchId);
-    const response = await ipcRenderer.invoke('hltv-delete-inspiration-card', {
-      matchId: normalizedMatchId,
-    });
-    applyHltvDiscoveryState(response);
-    if (activeInspirationMatchId === normalizedMatchId) {
-      activeInspirationMatchId = normalizedMatchId;
-      ensureActiveInspirationSelection();
-      renderHltvCards();
-    }
-    if (source) {
-      setHltvStatus('success', `Deleted inspiration card for ${source.team1Name} vs ${source.team2Name}.`);
-    }
-  }
-
   async function fetchRecentHltvMatches() {
-    setHltvStatus('loading', 'Refreshing HLTV discovery...');
+    clearHltvLoadingPoll();
+    setHltvStatus('loading', 'Refreshing HLTV browse list...');
+    console.log('[HLTV Renderer] refresh click start');
     try {
       const response = await ipcRenderer.invoke('hltv-refresh-discovery-state');
+      console.log(
+        `[HLTV Renderer] refresh response status=${response?.status || ''} matches=${Array.isArray(response?.matches) ? response.matches.length : -1}`,
+      );
+      applyHltvDiscoveryState(response, { resetVisible: true });
+      console.log('[HLTV Renderer] refresh render complete');
+    } catch (error) {
+      setHltvStatus('error', error.message || 'Failed to refresh HLTV browse list.');
+      console.error('[HLTV Browse Fatal Error]', error);
+    }
+  }
+
+  async function searchHltvMatches() {
+    const query = normalizeText(hltvFilterSearchInput?.value);
+    if (!query) {
+      setHltvStatus('error', '请输入 HLTV 搜索关键词。');
+      return;
+    }
+
+    clearHltvLoadingPoll();
+    setHltvStatus('loading', `Searching HLTV: ${query}`);
+    try {
+      const response = await ipcRenderer.invoke('hltv-search-matches', { query });
       applyHltvDiscoveryState(response, { resetVisible: true });
     } catch (error) {
-      setHltvStatus('error', error.message || 'Failed to refresh HLTV discovery.');
-      console.error('[HLTV Discovery Fatal Error]', error);
+      setHltvStatus('error', error.message || 'Failed to search HLTV matches.');
+      console.error('[HLTV Search Fatal Error]', error);
     }
   }
 
   async function loadInitialHltvState() {
     try {
+      clearHltvLoadingPoll();
+      console.log('[HLTV Renderer] initial state load start');
       const response = await ipcRenderer.invoke('hltv-get-discovery-state');
+      console.log(
+        `[HLTV Renderer] initial state response status=${response?.status || ''} matches=${Array.isArray(response?.matches) ? response.matches.length : -1}`,
+      );
       applyHltvDiscoveryState(response, { resetVisible: true });
 
       if (normalizeHltvPageStatus(response?.status) === 'idle') {
+        console.log('[HLTV Renderer] initial state idle; triggering refresh');
         await fetchRecentHltvMatches();
+      } else if (shouldAutoRefreshHltvState(response, { allowLoadingPoll: true })) {
+        console.log('[HLTV Renderer] initial state already loading; start polling');
+        hltvLoadingPollTimer = setTimeout(() => {
+          void pollHltvDiscoveryWhileLoading();
+        }, 800);
       }
     } catch (error) {
-      setHltvStatus('error', error.message || 'Failed to load initial HLTV discovery state.');
+      setHltvStatus('error', error.message || 'Failed to load initial HLTV browse state.');
       console.error('[HLTV Initial State Error]', error);
     }
   }
@@ -992,35 +722,15 @@
     }
 
     if (action === 'open-first-demo') {
-      const source = findDiscoverySource(matchId);
+      const source = getMatchById(matchId);
       if (source && source.playableDemoPaths.length > 0) {
-        await openDemoFromPath(source.playableDemoPaths[0]);
+        await openDemoFromPath(source.playableDemoPaths[0], matchId);
       }
       return;
     }
 
     if (action === 'open-demo') {
-      await openDemoFromPath(demoPath);
-      return;
-    }
-
-    if (action === 'queue-match') {
-      await queueMatch(matchId);
-      return;
-    }
-
-    if (action === 'remove-queued-match') {
-      await removeQueuedMatch(matchId);
-      return;
-    }
-
-    if (action === 'select-card-match') {
-      setActiveInspirationMatch(matchId);
-      return;
-    }
-
-    if (action === 'delete-card') {
-      await deleteInspirationCard(matchId);
+      await openDemoFromPath(demoPath, matchId);
     }
   }
 
@@ -1051,49 +761,33 @@
     btnHltvRefresh.addEventListener('click', fetchRecentHltvMatches);
   }
 
+  if (btnHltvSearch) {
+    btnHltvSearch.addEventListener('click', searchHltvMatches);
+  }
+
   if (btnHltvResetFilters) {
-    btnHltvResetFilters.addEventListener('click', resetDiscoveryFilters);
+    btnHltvResetFilters.addEventListener('click', resetFilters);
   }
 
   if (hltvFilterSearchInput) {
-    hltvFilterSearchInput.addEventListener('input', () => applyDiscoveryFiltersFromDom(true));
-  }
-
-  [
-    hltvFilterDemoOnlyInput,
-    hltvFilterCloseOnlyInput,
-    hltvFilterFeaturedOnlyInput,
-  ].forEach((inputElement) => {
-    if (inputElement) {
-      inputElement.addEventListener('change', () => applyDiscoveryFiltersFromDom(true));
-    }
-  });
-
-  if (btnHltvCardSave) {
-    btnHltvCardSave.addEventListener('click', saveInspirationCard);
-  }
-
-  if (btnHltvCardDelete) {
-    btnHltvCardDelete.addEventListener('click', () => {
-      void deleteInspirationCard();
+    hltvFilterSearchInput.addEventListener('input', () => applyFiltersFromDom(true));
+    hltvFilterSearchInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        void searchHltvMatches();
+      }
     });
   }
 
-  if (btnHltvCardClear) {
-    btnHltvCardClear.addEventListener('click', () => {
-      activeInspirationMatchId = '';
-      renderHltvCards();
-    });
+  if (hltvFilterDemoOnlyInput) {
+    hltvFilterDemoOnlyInput.addEventListener('change', () => applyFiltersFromDom(true));
   }
 
   if (hltvMatchListElement) {
     hltvMatchListElement.addEventListener('scroll', handleHltvMatchListScroll);
   }
 
-  bindActionContainer(hltvRecommendedListElement);
   bindActionContainer(hltvMatchListElement);
-  bindActionContainer(hltvQueueListElement);
-  bindActionContainer(hltvCardListElement);
 
   setHltvStatus('idle');
   renderHltvDiscoveryWorkspace();
@@ -1104,6 +798,7 @@
     openDemoFromPath,
     renderHltvDiscoveryWorkspace,
     renderHltvResults,
+    searchHltvMatches,
     setHltvStatus,
   };
 
@@ -1117,6 +812,7 @@
     globalScope.openDemoFromPath = openDemoFromPath;
     globalScope.renderHltvDiscoveryWorkspace = renderHltvDiscoveryWorkspace;
     globalScope.renderHltvResults = renderHltvResults;
+    globalScope.searchHltvMatches = searchHltvMatches;
     globalScope.setHltvStatus = setHltvStatus;
   }
 

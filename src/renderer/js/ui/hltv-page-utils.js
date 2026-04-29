@@ -15,9 +15,13 @@
     };
   }
 
-  function shouldAutoRefreshHltvState(state = {}) {
+  function shouldAutoRefreshHltvState(state = {}, options = {}) {
     const normalizedState = normalizeHltvRecentMatchesState(state);
-    return normalizedState.status === 'idle';
+    if (normalizedState.status === 'idle') {
+      return true;
+    }
+
+    return Boolean(options.allowLoadingPoll) && normalizedState.status === 'loading';
   }
 
   function shouldShowHltvStatusPanel(status) {
@@ -32,6 +36,42 @@
 
     const playableDemoPaths = Array.isArray(matchItem?.playableDemoPaths) ? matchItem.playableDemoPaths : [];
     return playableDemoPaths.length > 0 ? '打开 demo' : '下载 demo';
+  }
+
+  function normalizeScoreValue(value) {
+    const parsedValue = Number.parseInt(String(value ?? '').trim(), 10);
+    return Number.isFinite(parsedValue) ? parsedValue : null;
+  }
+
+  function buildHltvScoreDisplayModel(matchItem = {}) {
+    const team1Score = normalizeScoreValue(matchItem.team1Score);
+    const team2Score = normalizeScoreValue(matchItem.team2Score);
+    const left = team1Score === null ? '-' : String(team1Score);
+    const right = team2Score === null ? '-' : String(team2Score);
+    const baseClassName = 'hltv-results-score-value';
+
+    if (team1Score === null || team2Score === null || team1Score === team2Score) {
+      return {
+        left,
+        right,
+        leftClassName: `${baseClassName} is-neutral`,
+        rightClassName: `${baseClassName} is-neutral`,
+      };
+    }
+
+    return {
+      left,
+      right,
+      leftClassName: `${baseClassName} ${team1Score > team2Score ? 'is-win' : 'is-loss'}`,
+      rightClassName: `${baseClassName} ${team2Score > team1Score ? 'is-win' : 'is-loss'}`,
+    };
+  }
+
+  function hasKnownDemo(matchItem = {}) {
+    const playableDemoPaths = Array.isArray(matchItem?.playableDemoPaths) ? matchItem.playableDemoPaths : [];
+    return matchItem?.hasDemo === true
+      || String(matchItem?.downloadedDemoPath || '').trim() !== ''
+      || playableDemoPaths.some((filePath) => String(filePath || '').trim() !== '');
   }
 
   function formatHltvCacheSummaryText(cacheSummary = {}) {
@@ -61,8 +101,10 @@
   }
 
   const exportsObject = {
+    buildHltvScoreDisplayModel,
     formatHltvCacheSummaryText,
     getHltvActionLabel,
+    hasKnownDemo,
     normalizeHltvRecentMatchesState,
     normalizeHltvPageStatus,
     shouldShowHltvStatusPanel,
@@ -74,8 +116,10 @@
   }
 
   if (globalScope && typeof globalScope === 'object') {
+    globalScope.buildHltvScoreDisplayModel = buildHltvScoreDisplayModel;
     globalScope.formatHltvCacheSummaryText = formatHltvCacheSummaryText;
     globalScope.getHltvActionLabel = getHltvActionLabel;
+    globalScope.hasKnownDemo = hasKnownDemo;
     globalScope.normalizeHltvRecentMatchesState = normalizeHltvRecentMatchesState;
     globalScope.normalizeHltvPageStatus = normalizeHltvPageStatus;
     globalScope.shouldShowHltvStatusPanel = shouldShowHltvStatusPanel;

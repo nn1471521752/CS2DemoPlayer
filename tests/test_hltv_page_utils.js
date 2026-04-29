@@ -2,12 +2,47 @@ const assert = require('assert');
 
 const {
   formatHltvCacheSummaryText,
+  buildHltvScoreDisplayModel,
   getHltvActionLabel,
+  hasKnownDemo,
   normalizeHltvRecentMatchesState,
   normalizeHltvPageStatus,
   shouldShowHltvStatusPanel,
   shouldAutoRefreshHltvState,
 } = require('../src/renderer/js/ui/hltv-page-utils.js');
+
+assert.deepStrictEqual(
+  buildHltvScoreDisplayModel({ team1Score: 13, team2Score: 9 }),
+  {
+    left: '13',
+    right: '9',
+    leftClassName: 'hltv-results-score-value is-win',
+    rightClassName: 'hltv-results-score-value is-loss',
+  },
+  'should mark only the winning score as win',
+);
+
+assert.deepStrictEqual(
+  buildHltvScoreDisplayModel({ team1Score: null, team2Score: null }),
+  {
+    left: '-',
+    right: '-',
+    leftClassName: 'hltv-results-score-value is-neutral',
+    rightClassName: 'hltv-results-score-value is-neutral',
+  },
+  'should render missing scores as neutral instead of double loss',
+);
+
+assert.deepStrictEqual(
+  buildHltvScoreDisplayModel({ team1Score: 1, team2Score: 1 }),
+  {
+    left: '1',
+    right: '1',
+    leftClassName: 'hltv-results-score-value is-neutral',
+    rightClassName: 'hltv-results-score-value is-neutral',
+  },
+  'should render tied scores as neutral instead of double loss',
+);
 
 assert.strictEqual(
   getHltvActionLabel({ isDownloading: false, playableDemoPaths: [] }),
@@ -25,6 +60,24 @@ assert.strictEqual(
   getHltvActionLabel({ isDownloading: false, playableDemoPaths: ['C:\\Temp\\map1.dem'] }),
   '打开 demo',
   'should switch to an open label after playable demos exist',
+);
+
+assert.strictEqual(
+  hasKnownDemo({ hasDemo: false, playableDemoPaths: ['C:\\Temp\\map1.dem'] }),
+  true,
+  'local playable demos should satisfy demo-only filtering even if the remote hasDemo flag is stale',
+);
+
+assert.strictEqual(
+  hasKnownDemo({ hasDemo: false, downloadedDemoPath: 'C:\\Temp\\match.rar' }),
+  true,
+  'downloaded archives should satisfy demo-only filtering even if the remote hasDemo flag is stale',
+);
+
+assert.strictEqual(
+  hasKnownDemo({ hasDemo: false, playableDemoPaths: [], downloadedDemoPath: '' }),
+  false,
+  'matches without remote demo, local archive, or playable demos should not satisfy demo-only filtering',
 );
 
 assert.strictEqual(
@@ -79,6 +132,12 @@ assert.strictEqual(
   shouldAutoRefreshHltvState({ status: 'loading', matches: [] }),
   false,
   'should not start a second refresh while the startup load is already running',
+);
+
+assert.strictEqual(
+  shouldAutoRefreshHltvState({ status: 'loading', matches: [] }, { allowLoadingPoll: true }),
+  true,
+  'should allow the renderer to poll an already-running startup refresh',
 );
 
 assert.strictEqual(

@@ -14,6 +14,8 @@ function createHltvLocalLibraryService(deps = {}) {
   const searchHltvCachedMatches = requireFunction(deps, 'searchHltvCachedMatches');
   const searchHltvCachedTeams = requireFunction(deps, 'searchHltvCachedTeams');
   const searchHltvCachedPlayers = requireFunction(deps, 'searchHltvCachedPlayers');
+  const clearHltvCache = requireFunction(deps, 'clearHltvCache');
+  const markHltvMatchAddedToGameLibrary = requireFunction(deps, 'markHltvMatchAddedToGameLibrary');
 
   return {
     async getLibraryState(filters = {}) {
@@ -22,17 +24,25 @@ function createHltvLocalLibraryService(deps = {}) {
         tab: 'matches',
       });
 
-      const [summary, matches] = await Promise.all([
+      const [summary, matches, teams, players] = await Promise.all([
         getHltvCacheSummary(),
         searchHltvCachedMatches(normalizedFilters),
+        searchHltvCachedTeams(normalizeLocalLibraryFilters({
+          ...filters,
+          tab: 'teams',
+        })),
+        searchHltvCachedPlayers(normalizeLocalLibraryFilters({
+          ...filters,
+          tab: 'players',
+        })),
       ]);
 
       return {
         status: 'success',
         summary,
         matches,
-        teams: [],
-        players: [],
+        teams,
+        players,
       };
     },
 
@@ -55,6 +65,17 @@ function createHltvLocalLibraryService(deps = {}) {
         ...filters,
         tab: 'players',
       }));
+    },
+
+    async addMatchToGameLibrary(payload = {}) {
+      return markHltvMatchAddedToGameLibrary({
+        matchId: String(payload.matchId || '').trim(),
+        addedAt: String(payload.addedAt || '').trim(),
+      });
+    },
+
+    async clearCache() {
+      return clearHltvCache();
     },
   };
 }

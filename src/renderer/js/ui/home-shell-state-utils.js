@@ -2,8 +2,8 @@
   const HOME_SECTION_IDS = Object.freeze({
     demoLibrary: 'demo-library',
     localLibrary: 'local-library',
-    entities: 'entities',
     hltv: 'hltv',
+    playbook: 'playbook',
   });
 
   function normalizeHomeSectionId(sectionId) {

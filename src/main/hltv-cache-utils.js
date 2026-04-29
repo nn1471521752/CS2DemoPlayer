@@ -10,6 +10,14 @@ function normalizeNullableInteger(value) {
   return Number.isFinite(parsedValue) ? parsedValue : null;
 }
 
+function normalizeStarRating(value) {
+  const parsedValue = normalizeNullableInteger(value);
+  if (parsedValue === null) {
+    return 0;
+  }
+  return Math.max(0, Math.min(5, parsedValue));
+}
+
 function normalizeBoolean(value) {
   return value === true || value === 1 || value === '1';
 }
@@ -60,8 +68,10 @@ function normalizeHltvCacheMatch(match = {}) {
     matchUrl: normalizeText(match.matchUrl),
     team1Id: normalizeText(match.team1Id),
     team1Name: normalizeText(match.team1Name),
+    team1LogoUrl: normalizeText(match.team1LogoUrl),
     team2Id: normalizeText(match.team2Id),
     team2Name: normalizeText(match.team2Name),
+    team2LogoUrl: normalizeText(match.team2LogoUrl),
     team1Score: normalizeNullableInteger(match.team1Score),
     team2Score: normalizeNullableInteger(match.team2Score),
     eventId: normalizeText(match.eventId),
@@ -69,6 +79,7 @@ function normalizeHltvCacheMatch(match = {}) {
     matchFormat: normalizeText(match.matchFormat),
     matchTimeLabel: normalizeText(match.matchTimeLabel),
     matchTimestampMs: normalizeNullableInteger(match.matchTimestampMs),
+    hltvStarRating: normalizeStarRating(match.hltvStarRating),
     hasDemo: normalizeBoolean(match.hasDemo),
     downloadedDemoPath: normalizeText(match.downloadedDemoPath),
     downloadedFileSize: Number(match.downloadedFileSize) || 0,
@@ -162,8 +173,6 @@ function normalizeLocalLibraryFilters(filters = {}) {
     hasDemoOnly: Boolean(filters.hasDemoOnly),
     downloadedOnly: Boolean(filters.downloadedOnly),
     parsedOnly: Boolean(filters.parsedOnly),
-    queuedOnly: Boolean(filters.queuedOnly),
-    cardsOnly: Boolean(filters.cardsOnly),
     limit: Number.isFinite(limit) && limit > 0 ? limit : 100,
     offset: Number.isFinite(offset) && offset >= 0 ? offset : 0,
   };
@@ -181,6 +190,7 @@ module.exports = {
   normalizeLocalLibraryFilters,
   normalizeMapSlug,
   normalizeNullableInteger,
+  normalizeStarRating,
   normalizePlayableDemoPaths,
   normalizeText,
 };
